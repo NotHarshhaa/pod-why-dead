@@ -1,0 +1,202 @@
+package formatter
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/fatih/color"
+
+	"github.com/NotHarshhaa/pod-why-dead/pkg/analyzer"
+	"github.com/NotHarshhaa/pod-why-dead/pkg/k8s"
+)
+
+var (
+	headerStyle  = color.New(color.FgCyan, color.Bold)
+	causeStyle   = color.New(color.FgRed, color.Bold)
+	labelStyle   = color.New(color.FgWhite, color.Bold)
+	valueStyle   = color.New(color.FgWhite)
+	timeStyle    = color.New(color.FgYellow)
+	warnStyle    = color.New(color.FgYellow, color.Bold)
+	greenStyle   = color.New(color.FgGreen)
+	dimStyle     = color.New(color.Faint)
+	separator    = strings.Repeat("─", 58)
+)
+
+func formatText(w io.Writer, report *analyzer.Report) error {
+	fmt.Fprintln(w)
+	headerStyle.Fprintf(w, " Pod Death Report %s\n", separator)
+
+	// Basic info
+	printField(w, "  Pod       ", report.PodName)
+	printField(w, "  Namespace ", report.Namespace)
+	if report.NodeName != "" {
+		printField(w, "  Node      ", report.NodeName)
+	}
+	fmt.Fprintln(w)
+
+	// Cause
+	causeStyle.Fprintf(w, " Cause: %s\n", report.Cause)
+	if report.CauseDetail != "" {
+		dimStyle.Fprintf(w, "  %s\n", report.CauseDetail)
+	}
+	fmt.Fprintln(w)
+
+	// Container details
+	for _, c := range report.Containers {
+		if c.Reason == "" && c.ExitCode == 0 && c.State == "running" {
+			continue
+		}
+		labelStyle.Fprintf(w, "  Container  %s", c.Name)
+		if c.ExitCode != 0 {
+			fmt.Fprintf(w, " (exit code %d)", c.ExitCode)
+		}
+		fmt.Fprintln(w)
+
+		if c.MemoryLimit != "" {
+			printField(w, "  Memory limit   ", c.MemoryLimit)
+		}
+		if c.MemoryRequest != "" {
+			printField(w, "  Memory request ", c.MemoryRequest)
+		}
+		if c.CPULimit != "" {
+			printField(w, "  CPU limit      ", c.CPULimit)
+		}
+		if c.CPURequest != "" {
+			printField(w, "  CPU request    ", c.CPURequest)
+		}
+		if c.KilledAt != "" {
+			printField(w, "  Killed at      ", c.KilledAt)
+		}
+		if c.RestartCount > 0 {
+			printField(w, "  Restart count  ", fmt.Sprintf("%d", c.RestartCount))
+		}
+		if c.ProbeFailure != "" {
+			warnStyle.Fprintf(w, "  Probe failure  %s\n", c.ProbeFailure)
+		}
+		if c.Command != "" {
+			printField(w, "  Command        ", c.Command)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Timeline
+	if len(report.Timeline) > 0 {
+		headerStyle.Fprintln(w, " Timeline")
+		for _, t := range report.Timeline {
+			timeStyle.Fprintf(w, "  %s  ", t.Time)
+			valueStyle.Fprintln(w, t.Event)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Node pressure
+	if report.NodePressure != nil {
+		headerStyle.Fprintln(w, " Node Pressure at time of death")
+		printCondition(w, "  Memory pressure ", report.NodePressure.MemoryPressure)
+		printCondition(w, "  Disk pressure   ", report.NodePressure.DiskPressure)
+		printCondition(w, "  PID pressure    ", report.NodePressure.PIDPressure)
+		printNodeReady(w, "  Node ready      ", report.NodePressure.NodeReady)
+
+		if report.NodePressure.MemoryAllocatable != "" {
+			printField(w, "  Memory allocatable ", report.NodePressure.MemoryAllocatable)
+		}
+		if report.NodePressure.MemoryCapacity != "" {
+			printField(w, "  Memory capacity    ", report.NodePressure.MemoryCapacity)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Logs
+	if report.LogLines != "" {
+		headerStyle.Fprintf(w, " Last %d log lines (before death)\n", report.LogLineCount)
+		lines := strings.Split(strings.TrimRight(report.LogLines, "\n"), "\n")
+		for _, line := range lines {
+			dimStyle.Fprintf(w, "  %s\n", line)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Recommendations
+	if !report.NoRecommendations && len(report.Recommendations) > 0 {
+		headerStyle.Fprintln(w, " Recommendation")
+		for _, rec := range report.Recommendations {
+			greenStyle.Fprintf(w, "  • %s\n", rec)
+		}
+		fmt.Fprintln(w)
+	}
+
+	dimStyle.Fprintf(w, "%s\n", strings.Repeat("─", 58))
+	return nil
+}
+
+func formatDeadPodListText(w io.Writer, pods []k8s.DeadPodSummary, namespace, since string) error {
+	if len(pods) == 0 {
+		fmt.Fprintf(w, "\n No dead pods found in namespace %q (last %s)\n\n", namespace, since)
+		return nil
+	}
+
+	fmt.Fprintln(w)
+	headerStyle.Fprintf(w, " Recently Dead Pods (last %s) — namespace: %s\n", since, namespace)
+
+	// Find max name length for alignment
+	maxName := 0
+	for _, p := range pods {
+		if len(p.Name) > maxName {
+			maxName = len(p.Name)
+		}
+	}
+	if maxName > 45 {
+		maxName = 45
+	}
+
+	for _, p := range pods {
+		name := p.Name
+		if len(name) > 45 {
+			name = name[:42] + "..."
+		}
+		cause := p.Cause
+		if cause == "" {
+			cause = fmt.Sprintf("Error (%d)", p.ExitCode)
+		}
+
+		padding := strings.Repeat(" ", maxName-len(name)+2)
+		timeStr := p.DeathTime.UTC().Format("15:04:05")
+
+		causeColor := causeStyle
+		if strings.Contains(cause, "OOMKilled") {
+			causeColor = color.New(color.FgRed, color.Bold)
+		} else if strings.Contains(cause, "CrashLoop") {
+			causeColor = color.New(color.FgYellow, color.Bold)
+		}
+
+		fmt.Fprintf(w, "  %s%s", name, padding)
+		causeColor.Fprintf(w, "%-20s", cause)
+		timeStyle.Fprintf(w, " %s\n", timeStr)
+	}
+	fmt.Fprintln(w)
+	return nil
+}
+
+func printField(w io.Writer, label, value string) {
+	labelStyle.Fprintf(w, "%s ", label)
+	valueStyle.Fprintln(w, value)
+}
+
+func printCondition(w io.Writer, label string, active bool) {
+	labelStyle.Fprintf(w, "%s ", label)
+	if active {
+		causeStyle.Fprintln(w, "true  ⚠")
+	} else {
+		greenStyle.Fprintln(w, "false")
+	}
+}
+
+func printNodeReady(w io.Writer, label string, ready bool) {
+	labelStyle.Fprintf(w, "%s ", label)
+	if ready {
+		greenStyle.Fprintln(w, "true")
+	} else {
+		causeStyle.Fprintln(w, "false  ⚠")
+	}
+}

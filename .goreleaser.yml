@@ -1,0 +1,54 @@
+project_name: pod-why-dead
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    binary: pod-why-dead
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+brews:
+  - repository:
+      owner: NotHarshhaa
+      name: homebrew-tap
+    homepage: "https://github.com/NotHarshhaa/pod-why-dead"
+    description: "One command. Full death story of any Kubernetes pod."
+    license: "MIT"
+    install: |
+      bin.install "pod-why-dead"
+    test: |
+      system "#{bin}/pod-why-dead", "--help"

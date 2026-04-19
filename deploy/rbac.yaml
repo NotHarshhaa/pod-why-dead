@@ -1,0 +1,33 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-why-dead-reader
+  labels:
+    app: pod-why-dead
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pod-why-dead-reader-binding
+  labels:
+    app: pod-why-dead
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pod-why-dead-reader
+subjects:
+  - kind: ServiceAccount
+    name: pod-why-dead
+    namespace: default
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-why-dead
+  namespace: default
+  labels:
+    app: pod-why-dead
