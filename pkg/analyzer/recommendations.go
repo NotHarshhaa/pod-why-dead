@@ -6,31 +6,60 @@ import (
 )
 
 // generateRecommendations produces actionable suggestions based on the death cause.
-func generateRecommendations(report *Report) []string {
+func generateRecommendations(report *Report) ([]string, []string) {
 	var recs []string
+	var commands []string
 
 	switch {
 	case strings.Contains(report.Cause, "OOMKilled"):
-		recs = append(recs, oomKilledRecommendations(report)...)
+		recs, commands = oomKilledRecommendations(report, commands)
 	case strings.Contains(report.Cause, "CrashLoopBackOff"):
-		recs = append(recs, crashLoopRecommendations(report)...)
+		recs, commands = crashLoopRecommendations(report, commands)
 	case strings.Contains(report.Cause, "ImagePullBackOff") || strings.Contains(report.Cause, "ErrImagePull"):
-		recs = append(recs, imagePullRecommendations(report)...)
+		recs, commands = imagePullRecommendations(report, commands)
 	case strings.Contains(report.Cause, "Evicted"):
-		recs = append(recs, evictedRecommendations(report)...)
+		recs, commands = evictedRecommendations(report, commands)
 	case strings.Contains(report.Cause, "Liveness probe failed"):
-		recs = append(recs, livenessProbeRecommendations(report)...)
+		recs, commands = livenessProbeRecommendations(report, commands)
 	case strings.Contains(report.Cause, "Pending"):
-		recs = append(recs, pendingRecommendations(report)...)
+		recs, commands = pendingRecommendations(report, commands)
 	case strings.Contains(report.Cause, "Error"):
-		recs = append(recs, errorRecommendations(report)...)
+		recs, commands = errorRecommendations(report, commands)
 	default:
 		recs = append(recs, "Review pod logs and events for more details on the failure cause.")
+		commands = append(commands, fmt.Sprintf("kubectl logs %s/%s --previous", report.Namespace, report.PodName))
+		commands = append(commands, fmt.Sprintf("kubectl describe pod %s/%s", report.Namespace, report.PodName))
 	}
 
 	// Add node-level recommendations
 	if report.NodePressure != nil {
 		recs = append(recs, nodePressureRecommendations(report.NodePressure)...)
+		if report.NodeName != "" {
+			commands = append(commands, fmt.Sprintf("kubectl describe node %s", report.NodeName))
+		}
+	}
+
+	// Add PVC recommendations
+	if len(report.PVCs) > 0 {
+		for _, pvc := range report.PVCs {
+			if !pvc.Bound {
+				recs = append(recs, fmt.Sprintf("PVC %s is not bound — check PV availability and storage class.", pvc.Name))
+				commands = append(commands, fmt.Sprintf("kubectl describe pvc %s -n %s", pvc.Name, report.Namespace))
+			}
+		}
+	}
+
+	// Add quota recommendations
+	if report.ResourceQuota != nil {
+		recs = append(recs, "Check namespace resource quotas — you may be hitting limits.")
+		commands = append(commands, fmt.Sprintf("kubectl get resourcequota -n %s", report.Namespace))
+	}
+
+	// Add scheduling recommendations
+	if report.Scheduling != nil {
+		if len(report.Scheduling.Tolerations) > 0 || len(report.Scheduling.AffinityRules) > 0 {
+			recs = append(recs, "Pod has scheduling constraints (tolerations/affinity) that may affect placement.")
+		}
 	}
 
 	// Add restart-based recommendations
@@ -40,10 +69,16 @@ func generateRecommendations(report *Report) []string {
 			report.RestartCount))
 	}
 
-	return recs
+	// Add common commands if not already present
+	if len(commands) == 0 {
+		commands = append(commands, fmt.Sprintf("kubectl logs %s/%s --previous", report.Namespace, report.PodName))
+		commands = append(commands, fmt.Sprintf("kubectl describe pod %s/%s", report.Namespace, report.PodName))
+	}
+
+	return recs, commands
 }
 
-func oomKilledRecommendations(report *Report) []string {
+func oomKilledRecommendations(report *Report, commands []string) ([]string, []string) {
 	var recs []string
 	for _, c := range report.Containers {
 		if c.Reason == "OOMKilled" {
@@ -59,13 +94,14 @@ func oomKilledRecommendations(report *Report) []string {
 			recs = append(recs,
 				"Check for memory leaks — look for unbounded caches, growing buffers, or large batch processing.",
 				"Consider using a VPA (Vertical Pod Autoscaler) to right-size memory limits automatically.")
+			commands = append(commands, fmt.Sprintf("kubectl top pod %s -n %s", report.PodName, report.Namespace))
 			break
 		}
 	}
-	return recs
+	return recs, commands
 }
 
-func crashLoopRecommendations(report *Report) []string {
+func crashLoopRecommendations(report *Report, commands []string) ([]string, []string) {
 	recs := []string{
 		"Check the previous container logs for the root cause of repeated crashes.",
 		"Verify the container's entrypoint/command is correct and the application starts successfully.",
@@ -74,20 +110,24 @@ func crashLoopRecommendations(report *Report) []string {
 	if report.RestartCount > 10 {
 		recs = append(recs, "The high restart count suggests a persistent issue — consider rolling back to a known-good version.")
 	}
-	return recs
+	commands = append(commands, fmt.Sprintf("kubectl logs %s/%s --previous", report.Namespace, report.PodName))
+	return recs, commands
 }
 
-func imagePullRecommendations(report *Report) []string {
+func imagePullRecommendations(report *Report, commands []string) ([]string, []string) {
 	recs := []string{
 		"Verify the image name and tag are correct.",
 		"Check that the image exists in the registry.",
 		"If using a private registry, ensure imagePullSecrets are configured on the pod or service account.",
 		"Check network connectivity from the node to the container registry.",
 	}
-	return recs
+	for _, c := range report.Containers {
+		commands = append(commands, fmt.Sprintf("docker pull %s", c.Image))
+	}
+	return recs, commands
 }
 
-func evictedRecommendations(report *Report) []string {
+func evictedRecommendations(report *Report, commands []string) ([]string, []string) {
 	recs := []string{
 		"The pod was evicted due to node resource pressure.",
 		"Review resource requests and limits to ensure they match actual usage.",
@@ -97,10 +137,13 @@ func evictedRecommendations(report *Report) []string {
 	if report.CauseDetail != "" {
 		recs = append(recs, fmt.Sprintf("Eviction detail: %s", report.CauseDetail))
 	}
-	return recs
+	if report.NodeName != "" {
+		commands = append(commands, fmt.Sprintf("kubectl describe node %s", report.NodeName))
+	}
+	return recs, commands
 }
 
-func livenessProbeRecommendations(report *Report) []string {
+func livenessProbeRecommendations(report *Report, commands []string) ([]string, []string) {
 	recs := []string{
 		"The liveness probe killed the container because it was unresponsive.",
 		"Increase initialDelaySeconds if the application needs more time to start.",
@@ -112,10 +155,11 @@ func livenessProbeRecommendations(report *Report) []string {
 			recs = append(recs, fmt.Sprintf("Probe details: %s", c.ProbeFailure))
 		}
 	}
-	return recs
+	commands = append(commands, fmt.Sprintf("kubectl get pod %s/%s -o yaml", report.Namespace, report.PodName))
+	return recs, commands
 }
 
-func pendingRecommendations(report *Report) []string {
+func pendingRecommendations(report *Report, commands []string) ([]string, []string) {
 	recs := []string{
 		"The pod could not be scheduled onto any node.",
 	}
@@ -132,10 +176,14 @@ func pendingRecommendations(report *Report) []string {
 		recs = append(recs, "Review node affinity rules — they may be too restrictive for the available nodes.")
 	}
 	recs = append(recs, "Run 'kubectl describe nodes' to see available resources across the cluster.")
-	return recs
+	commands = append(commands, fmt.Sprintf("kubectl describe nodes"))
+	if report.Scheduling != nil && len(report.Scheduling.NodeSelector) > 0 {
+		commands = append(commands, fmt.Sprintf("kubectl get nodes -l %s", formatNodeSelector(report.Scheduling.NodeSelector)))
+	}
+	return recs, commands
 }
 
-func errorRecommendations(report *Report) []string {
+func errorRecommendations(report *Report, commands []string) ([]string, []string) {
 	recs := []string{
 		"The container exited with a non-zero exit code indicating an application error.",
 		"Check the container logs for error messages and stack traces.",
@@ -156,7 +204,16 @@ func errorRecommendations(report *Report) []string {
 			recs = append(recs, fmt.Sprintf("Exit code %d means the process was killed by signal %d.", c.ExitCode, c.ExitCode-128))
 		}
 	}
-	return recs
+	commands = append(commands, fmt.Sprintf("kubectl logs %s/%s --previous", report.Namespace, report.PodName))
+	return recs, commands
+}
+
+func formatNodeSelector(selector map[string]string) string {
+	var parts []string
+	for k, v := range selector {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	}
+	return strings.Join(parts, ",")
 }
 
 func nodePressureRecommendations(np *NodePressure) []string {

@@ -114,14 +114,32 @@ func runInspectMode(client *k8s.Client, podName string, sinceDuration time.Durat
 	}
 
 	var nodeConditions *k8s.NodeConditions
+	var nodeInfo *k8s.NodeInfo
 	if podInfo.NodeName != "" {
 		nodeConditions, err = client.GetNodeConditions(podInfo.NodeName)
 		if err != nil {
 			nodeConditions = nil
 		}
+		nodeInfo, err = client.GetNodeInfo(podInfo.NodeName)
+		if err != nil {
+			nodeInfo = nil
+		}
 	}
 
-	report := analyzer.Analyze(podInfo, events, logs, nodeConditions, logLines)
+	var pvcs []k8s.PVCInfo
+	if len(podInfo.PVCNames) > 0 {
+		pvcs, err = client.GetPVCInfo(namespace, podInfo.PVCNames)
+		if err != nil {
+			pvcs = nil
+		}
+	}
+
+	quota, err := client.GetResourceQuota(namespace)
+	if err != nil {
+		quota = nil
+	}
+
+	report := analyzer.Analyze(podInfo, events, logs, nodeConditions, logLines, nodeInfo, pvcs, quota)
 	report.NoRecommendations = noRecommendations
 
 	f := formatter.New(outputFormat)

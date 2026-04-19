@@ -95,17 +95,11 @@ When a pod dies in Kubernetes, the information you need is scattered across five
 
 
 | What you need | Without pod-why-dead | With pod-why-dead |
-
 |---|---|---|
-
 | Exit code + reason | `kubectl describe pod` | Instant |
-
 | Last logs | `kubectl logs --previous` | Instant |
-
 | Node conditions | `kubectl describe node` | Instant |
-
 | Resource usage | `kubectl top pod` (if still alive) | Reconstructed |
-
 | Event timeline | `kubectl get events --field-selector` | Instant |
 
 
@@ -273,18 +267,26 @@ pod-why-dead -n production --list --since 1h
 ## What it checks
 
 
-
 `pod-why-dead` reconstructs the full picture from what Kubernetes still knows after a pod is gone:
 
 
+- **Exit code + reason** — OOMKilled, Error, Evicted, CrashLoopBackOff with detailed explanations
 
-- **Exit code + reason** — OOMKilled, Error, Evicted, CrashLoopBackOff
+- **Exit code deep dive** — detailed explanations for common exit codes (1, 127, 128+signal, etc.)
 
 - **Previous container logs** — last N lines before death
 
 - **Full event timeline** — from scheduling to termination
 
 - **Node conditions at death** — MemoryPressure, DiskPressure, PIDPressure
+
+- **Node information** — kernel version, OS, container runtime, taints, labels
+
+- **Scheduling constraints** — node selectors, tolerations, affinity rules
+
+- **Persistent Volume Claims** — PVC status, capacity, storage class
+
+- **Resource quota analysis** — namespace resource quota usage
 
 - **Resource limit vs peak usage** — how close were you to the limit?
 
@@ -294,10 +296,11 @@ pod-why-dead -n production --list --since 1h
 
 - **Recommendations** — concrete next steps based on the cause
 
+- **Suggested kubectl commands** — ready-to-run commands for debugging
+
 
 
 ---
-
 
 
 ## Death causes handled
@@ -336,32 +339,21 @@ pod-why-dead -n production --list --since 1h
 
 - A valid `kubeconfig` (same as `kubectl`)
 
-- RBAC: `get` and `list` on `pods`, `events`, `nodes`
+- RBAC: `get` and `list` on `pods`, `pods/log`, `events`, `nodes`, `persistentvolumeclaims`, `resourcequotas`
 
 
 
 ### Minimal RBAC for read-only use
 
-
-
 ```yaml
-
 apiVersion: rbac.authorization.k8s.io/v1
-
 kind: ClusterRole
-
 metadata:
-
   name: pod-why-dead-reader
-
 rules:
-
   - apiGroups: [""]
-
-    resources: ["pods", "pods/log", "events", "nodes"]
-
+    resources: ["pods", "pods/log", "events", "nodes", "persistentvolumeclaims", "resourcequotas"]
     verbs: ["get", "list"]
-
 ```
 
 

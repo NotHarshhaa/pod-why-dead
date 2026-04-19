@@ -10,19 +10,25 @@ import (
 
 // Report is the structured death report.
 type Report struct {
-	PodName           string            `json:"pod_name"`
-	Namespace         string            `json:"namespace"`
-	NodeName          string            `json:"node_name"`
-	Cause             string            `json:"cause"`
-	CauseDetail       string            `json:"cause_detail"`
-	Containers        []ContainerReport `json:"containers"`
-	Timeline          []TimelineEntry   `json:"timeline"`
-	NodePressure      *NodePressure     `json:"node_pressure,omitempty"`
-	LogLines          string            `json:"log_lines,omitempty"`
-	LogLineCount      int               `json:"log_line_count"`
-	Recommendations   []string          `json:"recommendations,omitempty"`
-	RestartCount      int32             `json:"restart_count"`
-	NoRecommendations bool              `json:"-"`
+	PodName             string            `json:"pod_name"`
+	Namespace           string            `json:"namespace"`
+	NodeName            string            `json:"node_name"`
+	Cause               string            `json:"cause"`
+	CauseDetail         string            `json:"cause_detail"`
+	ExitCodeExplanation string            `json:"exit_code_explanation,omitempty"`
+	Containers          []ContainerReport `json:"containers"`
+	Timeline            []TimelineEntry   `json:"timeline"`
+	NodePressure        *NodePressure     `json:"node_pressure,omitempty"`
+	NodeInfo            *NodeInfo         `json:"node_info,omitempty"`
+	PVCs                []PVCReport       `json:"pvcs,omitempty"`
+	ResourceQuota       *QuotaReport      `json:"resource_quota,omitempty"`
+	Scheduling          *SchedulingInfo   `json:"scheduling,omitempty"`
+	LogLines            string            `json:"log_lines,omitempty"`
+	LogLineCount        int               `json:"log_line_count"`
+	Recommendations     []string          `json:"recommendations,omitempty"`
+	KubectlCommands     []string          `json:"kubectl_commands,omitempty"`
+	RestartCount        int32             `json:"restart_count"`
+	NoRecommendations   bool              `json:"-"`
 }
 
 // ContainerReport holds per-container death details.
@@ -47,8 +53,8 @@ type ContainerReport struct {
 
 // TimelineEntry is a single event in the pod's timeline.
 type TimelineEntry struct {
-	Time    string `json:"time"`
-	Event   string `json:"event"`
+	Time    string    `json:"time"`
+	Event   string    `json:"event"`
 	RawTime time.Time `json:"-"`
 }
 
@@ -64,8 +70,48 @@ type NodePressure struct {
 	CPUAllocatable    string `json:"cpu_allocatable,omitempty"`
 }
 
+// NodeInfo holds detailed node information.
+type NodeInfo struct {
+	Name             string            `json:"name"`
+	KernelVersion    string            `json:"kernel_version"`
+	OSImage          string            `json:"os_image"`
+	ContainerRuntime string            `json:"container_runtime"`
+	KubeletVersion   string            `json:"kubelet_version"`
+	Taints           []string          `json:"taints,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+}
+
+// PVCReport holds PVC status information.
+type PVCReport struct {
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	Bound        bool   `json:"bound"`
+	Capacity     string `json:"capacity,omitempty"`
+	StorageClass string `json:"storage_class,omitempty"`
+	AccessModes  string `json:"access_modes,omitempty"`
+}
+
+// QuotaReport holds resource quota information.
+type QuotaReport struct {
+	Name       string `json:"name"`
+	HardCPU    string `json:"hard_cpu"`
+	HardMemory string `json:"hard_memory"`
+	HardPods   string `json:"hard_pods"`
+	UsedCPU    string `json:"used_cpu"`
+	UsedMemory string `json:"used_memory"`
+	UsedPods   string `json:"used_pods"`
+}
+
+// SchedulingInfo holds scheduling-related information.
+type SchedulingInfo struct {
+	NodeSelector  map[string]string `json:"node_selector,omitempty"`
+	Tolerations   []string          `json:"tolerations,omitempty"`
+	AffinityRules []string          `json:"affinity_rules,omitempty"`
+}
+
 // Analyze builds a full death report from gathered Kubernetes data.
-func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeConditions *k8s.NodeConditions, logLineCount int) *Report {
+func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeConditions *k8s.NodeConditions, logLineCount int,
+	nodeInfo *k8s.NodeInfo, pvcs []k8s.PVCInfo, quota *k8s.QuotaInfo) *Report {
 	report := &Report{
 		PodName:      podInfo.Name,
 		Namespace:    podInfo.Namespace,
@@ -73,6 +119,59 @@ func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeCond
 		LogLines:     logs,
 		LogLineCount: logLineCount,
 		RestartCount: podInfo.RestartCount,
+	}
+
+	// Add scheduling info
+	if len(podInfo.NodeSelector) > 0 || len(podInfo.Tolerations) > 0 || len(podInfo.AffinityRules) > 0 {
+		report.Scheduling = &SchedulingInfo{
+			NodeSelector:  podInfo.NodeSelector,
+			Tolerations:   podInfo.Tolerations,
+			AffinityRules: podInfo.AffinityRules,
+		}
+	}
+
+	// Add node info
+	if nodeInfo != nil {
+		taints := make([]string, len(nodeInfo.Taints))
+		for i, t := range nodeInfo.Taints {
+			taints[i] = fmt.Sprintf("%s=%s:%s", t.Key, t.Value, t.Effect)
+		}
+		report.NodeInfo = &NodeInfo{
+			Name:             nodeInfo.Name,
+			KernelVersion:    nodeInfo.KernelVersion,
+			OSImage:          nodeInfo.OSImage,
+			ContainerRuntime: nodeInfo.ContainerRuntime,
+			KubeletVersion:   nodeInfo.KubeletVersion,
+			Taints:           taints,
+			Labels:           nodeInfo.Labels,
+		}
+	}
+
+	// Add PVCs
+	if len(pvcs) > 0 {
+		for _, pvc := range pvcs {
+			report.PVCs = append(report.PVCs, PVCReport{
+				Name:         pvc.Name,
+				Status:       pvc.Status,
+				Bound:        pvc.Bound,
+				Capacity:     pvc.Capacity,
+				StorageClass: pvc.StorageClass,
+				AccessModes:  pvc.AccessModes,
+			})
+		}
+	}
+
+	// Add quota info
+	if quota != nil {
+		report.ResourceQuota = &QuotaReport{
+			Name:       quota.Name,
+			HardCPU:    quota.HardCPU,
+			HardMemory: quota.HardMemory,
+			HardPods:   quota.HardPods,
+			UsedCPU:    quota.UsedCPU,
+			UsedMemory: quota.UsedMemory,
+			UsedPods:   quota.UsedPods,
+		}
 	}
 
 	// Build container reports
@@ -113,7 +212,7 @@ func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeCond
 	}
 
 	// Determine cause
-	report.Cause, report.CauseDetail = determineCause(podInfo, events, report.Containers)
+	report.Cause, report.CauseDetail, report.ExitCodeExplanation = determineCause(podInfo, events, report.Containers)
 
 	// Build timeline
 	report.Timeline = buildTimeline(podInfo, events)
@@ -132,26 +231,26 @@ func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeCond
 		}
 	}
 
-	// Generate recommendations
-	report.Recommendations = generateRecommendations(report)
+	// Generate recommendations and kubectl commands
+	report.Recommendations, report.KubectlCommands = generateRecommendations(report)
 
 	return report
 }
 
-func determineCause(podInfo *k8s.PodInfo, events []k8s.EventInfo, containers []ContainerReport) (string, string) {
+func determineCause(podInfo *k8s.PodInfo, events []k8s.EventInfo, containers []ContainerReport) (string, string, string) {
 	// Check pod-level eviction
 	if podInfo.Reason == "Evicted" {
-		return "Evicted", podInfo.Message
+		return "Evicted", podInfo.Message, ""
 	}
 
 	// Check for scheduling failures (Pending pods)
 	if podInfo.Phase == "Pending" {
 		for _, e := range events {
 			if e.Reason == "FailedScheduling" {
-				return "Pending — never started", e.Message
+				return "Pending — never started", e.Message, ""
 			}
 		}
-		return "Pending — never started", "Pod has not been scheduled"
+		return "Pending — never started", "Pod has not been scheduled", ""
 	}
 
 	// Check container-level causes
@@ -162,18 +261,18 @@ func determineCause(podInfo *k8s.PodInfo, events []k8s.EventInfo, containers []C
 			if c.MemoryLimit != "" {
 				detail += fmt.Sprintf(", memory limit: %s", c.MemoryLimit)
 			}
-			return "OOMKilled", detail
+			return "OOMKilled", detail, explainExitCode(c.ExitCode)
 
 		case c.Reason == "CrashLoopBackOff":
 			detail := fmt.Sprintf("Container %s, restart count: %d", c.Name, c.RestartCount)
-			return "CrashLoopBackOff", detail
+			return "CrashLoopBackOff", detail, explainExitCode(c.ExitCode)
 
 		case c.Reason == "ImagePullBackOff" || c.Reason == "ErrImagePull":
 			detail := fmt.Sprintf("Image: %s", c.Image)
 			if c.Message != "" {
 				detail += fmt.Sprintf(" — %s", c.Message)
 			}
-			return "ImagePullBackOff", detail
+			return "ImagePullBackOff", detail, ""
 
 		case c.Reason == "Error" || (c.ExitCode != 0 && c.State == "terminated"):
 			reason := c.Reason
@@ -184,23 +283,23 @@ func determineCause(podInfo *k8s.PodInfo, events []k8s.EventInfo, containers []C
 			if c.Command != "" {
 				detail += fmt.Sprintf(", command: %s", c.Command)
 			}
-			return reason, detail
+			return reason, detail, explainExitCode(c.ExitCode)
 		}
 	}
 
 	// Check for liveness probe failures in events
 	for _, e := range events {
 		if strings.Contains(e.Message, "Liveness probe failed") {
-			return "Liveness probe failed", e.Message
+			return "Liveness probe failed", e.Message, ""
 		}
 	}
 
 	// Fallback
 	if podInfo.Reason != "" {
-		return podInfo.Reason, podInfo.Message
+		return podInfo.Reason, podInfo.Message, ""
 	}
 
-	return "Unknown", "Could not determine cause of death"
+	return "Unknown", "Could not determine cause of death", ""
 }
 
 func findProbeFailure(events []k8s.EventInfo, probeType string, probe *k8s.ProbeInfo) string {
@@ -271,4 +370,37 @@ func buildTimeline(podInfo *k8s.PodInfo, events []k8s.EventInfo) []TimelineEntry
 	}
 
 	return timeline
+}
+
+func explainExitCode(code int32) string {
+	if code == 0 {
+		return "Exit code 0 means success (container exited normally)"
+	}
+
+	switch code {
+	case 1:
+		return "Exit code 1: General application error (check logs for details)"
+	case 2:
+		return "Exit code 2: Shell misuse or incorrect command usage"
+	case 126:
+		return "Exit code 126: Command found but not executable (check file permissions)"
+	case 127:
+		return "Exit code 127: Command not found (check if binary exists in image)"
+	case 128:
+		return "Exit code 128: Invalid exit argument passed to exit command"
+	case 130:
+		return "Exit code 130: Container terminated by SIGINT (Ctrl+C)"
+	case 137:
+		return "Exit code 137: Container killed by SIGKILL (typically OOMKilled)"
+	case 139:
+		return "Exit code 139: Container terminated by SIGSEGV (segmentation fault)"
+	case 143:
+		return "Exit code 143: Container terminated by SIGTERM (graceful shutdown request)"
+	default:
+		if code > 128 {
+			signal := code - 128
+			return fmt.Sprintf("Exit code %d: Process killed by signal %d", code, signal)
+		}
+		return fmt.Sprintf("Exit code %d: Application-specific error (check logs)", code)
+	}
 }

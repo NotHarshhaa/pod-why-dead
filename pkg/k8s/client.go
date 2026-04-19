@@ -62,6 +62,11 @@ type PodInfo struct {
 	StartTime       *time.Time
 	DeletionTime    *time.Time
 	Conditions      []PodCondition
+	NodeSelector    map[string]string
+	Tolerations     []string
+	AffinityRules   []string
+	PVCNames        []string
+	ImageDigest     string
 }
 
 // ContainerInfo holds information about a single container.
@@ -106,24 +111,24 @@ type PodCondition struct {
 
 // NodeConditions holds the conditions of a node.
 type NodeConditions struct {
-	NodeName         string
-	MemoryPressure   bool
-	DiskPressure     bool
-	PIDPressure      bool
-	Ready            bool
-	MemoryCapacity   string
+	NodeName          string
+	MemoryPressure    bool
+	DiskPressure      bool
+	PIDPressure       bool
+	Ready             bool
+	MemoryCapacity    string
 	MemoryAllocatable string
-	CPUCapacity      string
-	CPUAllocatable   string
+	CPUCapacity       string
+	CPUAllocatable    string
 }
 
 // DeadPodSummary is a brief summary for list mode.
 type DeadPodSummary struct {
-	Name       string
-	Cause      string
-	DeathTime  time.Time
-	Namespace  string
-	ExitCode   int32
+	Name      string
+	Cause     string
+	DeathTime time.Time
+	Namespace string
+	ExitCode  int32
 }
 
 // EventInfo is a simplified Kubernetes event.
@@ -144,12 +149,52 @@ func (c *Client) GetPodInfo(namespace, name string) (*PodInfo, error) {
 	}
 
 	info := &PodInfo{
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
-		NodeName:  pod.Spec.NodeName,
-		Phase:     string(pod.Status.Phase),
-		Reason:    pod.Status.Reason,
-		Message:   pod.Status.Message,
+		Name:         pod.Name,
+		Namespace:    pod.Namespace,
+		NodeName:     pod.Spec.NodeName,
+		Phase:        string(pod.Status.Phase),
+		Reason:       pod.Status.Reason,
+		Message:      pod.Status.Message,
+		NodeSelector: pod.Spec.NodeSelector,
+	}
+
+	// Extract tolerations
+	for _, t := range pod.Spec.Tolerations {
+		tolStr := t.Key
+		if t.Operator == "Equal" {
+			tolStr += "=" + t.Value
+		}
+		if t.Effect != "" {
+			tolStr += ":" + string(t.Effect)
+		}
+		info.Tolerations = append(info.Tolerations, tolStr)
+	}
+
+	// Extract affinity rules
+	if pod.Spec.Affinity != nil {
+		if pod.Spec.Affinity.NodeAffinity != nil {
+			for _, term := range pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+				for _, expr := range term.MatchExpressions {
+					info.AffinityRules = append(info.AffinityRules,
+						fmt.Sprintf("%s %s %s", expr.Key, expr.Operator, strings.Join(expr.Values, ",")))
+				}
+			}
+		}
+	}
+
+	// Extract PVC names
+	for _, vol := range pod.Spec.Volumes {
+		if vol.PersistentVolumeClaim != nil {
+			info.PVCNames = append(info.PVCNames, vol.PersistentVolumeClaim.ClaimName)
+		}
+	}
+
+	// Extract image digest from container status
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.ImageID != "" && strings.Contains(cs.ImageID, "@sha256:") {
+			info.ImageDigest = cs.ImageID
+			break
+		}
 	}
 
 	if pod.Status.StartTime != nil {
@@ -487,4 +532,158 @@ func isDeadWaitingReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// PVCInfo holds information about a Persistent Volume Claim.
+type PVCInfo struct {
+	Name         string
+	Status       string
+	VolumeName   string
+	Capacity     string
+	StorageClass string
+	AccessModes  string
+	Bound        bool
+}
+
+// GetPVCInfo retrieves PVC information for a pod.
+func (c *Client) GetPVCInfo(namespace string, pvcNames []string) ([]PVCInfo, error) {
+	if len(pvcNames) == 0 {
+		return nil, nil
+	}
+
+	ctx := context.Background()
+	var pvcs []PVCInfo
+
+	for _, pvcName := range pvcNames {
+		pvc, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+		if err != nil {
+			// PVC might not exist, skip
+			continue
+		}
+
+		capacity := ""
+		if pvc.Status.Capacity != nil {
+			if storage := pvc.Status.Capacity.Storage(); storage != nil {
+				capacity = storage.String()
+			}
+		}
+
+		accessModes := ""
+		if len(pvc.Spec.AccessModes) > 0 {
+			accessModes = string(pvc.Spec.AccessModes[0])
+		}
+
+		pvcs = append(pvcs, PVCInfo{
+			Name:         pvc.Name,
+			Status:       string(pvc.Status.Phase),
+			VolumeName:   pvc.Spec.VolumeName,
+			Capacity:     capacity,
+			StorageClass: *pvc.Spec.StorageClassName,
+			AccessModes:  accessModes,
+			Bound:        pvc.Status.Phase == corev1.ClaimBound,
+		})
+	}
+
+	return pvcs, nil
+}
+
+// NodeInfo holds detailed node information.
+type NodeInfo struct {
+	Name             string
+	Labels           map[string]string
+	Taints           []TaintInfo
+	KernelVersion    string
+	OSImage          string
+	ContainerRuntime string
+	KubeletVersion   string
+}
+
+// TaintInfo holds node taint information.
+type TaintInfo struct {
+	Key    string
+	Value  string
+	Effect string
+}
+
+// GetNodeInfo retrieves detailed node information.
+func (c *Client) GetNodeInfo(nodeName string) (*NodeInfo, error) {
+	ctx := context.Background()
+	node, err := c.clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
+	var taints []TaintInfo
+	for _, t := range node.Spec.Taints {
+		taints = append(taints, TaintInfo{
+			Key:    t.Key,
+			Value:  t.Value,
+			Effect: string(t.Effect),
+		})
+	}
+
+	return &NodeInfo{
+		Name:             node.Name,
+		Labels:           node.Labels,
+		Taints:           taints,
+		KernelVersion:    node.Status.NodeInfo.KernelVersion,
+		OSImage:          node.Status.NodeInfo.OSImage,
+		ContainerRuntime: node.Status.NodeInfo.ContainerRuntimeVersion,
+		KubeletVersion:   node.Status.NodeInfo.KubeletVersion,
+	}, nil
+}
+
+// QuotaInfo holds resource quota information.
+type QuotaInfo struct {
+	Name       string
+	HardCPU    string
+	HardMemory string
+	HardPods   string
+	UsedCPU    string
+	UsedMemory string
+	UsedPods   string
+	AtCPU      string
+	AtMemory   string
+	AtPods     string
+}
+
+// GetResourceQuota retrieves namespace resource quota information.
+func (c *Client) GetResourceQuota(namespace string) (*QuotaInfo, error) {
+	ctx := context.Background()
+	quotaList, err := c.clientset.CoreV1().ResourceQuotas(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list resource quotas: %w", err)
+	}
+
+	if len(quotaList.Items) == 0 {
+		return nil, nil
+	}
+
+	// Aggregate all quotas
+	var q QuotaInfo
+	for _, quota := range quotaList.Items {
+		q.Name = quota.Name
+
+		if hardCPU := quota.Status.Hard.Cpu(); hardCPU != nil {
+			q.HardCPU = hardCPU.String()
+		}
+		if hardMem := quota.Status.Hard.Memory(); hardMem != nil {
+			q.HardMemory = hardMem.String()
+		}
+		if hardPods := quota.Status.Hard.Pods(); hardPods != nil {
+			q.HardPods = hardPods.String()
+		}
+
+		if usedCPU := quota.Status.Used.Cpu(); usedCPU != nil {
+			q.UsedCPU = usedCPU.String()
+		}
+		if usedMem := quota.Status.Used.Memory(); usedMem != nil {
+			q.UsedMemory = usedMem.String()
+		}
+		if usedPods := quota.Status.Used.Pods(); usedPods != nil {
+			q.UsedPods = usedPods.String()
+		}
+	}
+
+	return &q, nil
 }

@@ -12,15 +12,15 @@ import (
 )
 
 var (
-	headerStyle  = color.New(color.FgCyan, color.Bold)
-	causeStyle   = color.New(color.FgRed, color.Bold)
-	labelStyle   = color.New(color.FgWhite, color.Bold)
-	valueStyle   = color.New(color.FgWhite)
-	timeStyle    = color.New(color.FgYellow)
-	warnStyle    = color.New(color.FgYellow, color.Bold)
-	greenStyle   = color.New(color.FgGreen)
-	dimStyle     = color.New(color.Faint)
-	separator    = strings.Repeat("─", 58)
+	headerStyle = color.New(color.FgCyan, color.Bold)
+	causeStyle  = color.New(color.FgRed, color.Bold)
+	labelStyle  = color.New(color.FgWhite, color.Bold)
+	valueStyle  = color.New(color.FgWhite)
+	timeStyle   = color.New(color.FgYellow)
+	warnStyle   = color.New(color.FgYellow, color.Bold)
+	greenStyle  = color.New(color.FgGreen)
+	dimStyle    = color.New(color.Faint)
+	separator   = strings.Repeat("─", 58)
 )
 
 func formatText(w io.Writer, report *analyzer.Report) error {
@@ -39,6 +39,9 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 	causeStyle.Fprintf(w, " Cause: %s\n", report.Cause)
 	if report.CauseDetail != "" {
 		dimStyle.Fprintf(w, "  %s\n", report.CauseDetail)
+	}
+	if report.ExitCodeExplanation != "" {
+		dimStyle.Fprintf(w, "  %s\n", report.ExitCodeExplanation)
 	}
 	fmt.Fprintln(w)
 
@@ -107,6 +110,84 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 		fmt.Fprintln(w)
 	}
 
+	// Node info
+	if report.NodeInfo != nil {
+		headerStyle.Fprintln(w, " Node Information")
+		if report.NodeInfo.KernelVersion != "" {
+			printField(w, "  Kernel version   ", report.NodeInfo.KernelVersion)
+		}
+		if report.NodeInfo.OSImage != "" {
+			printField(w, "  OS image         ", report.NodeInfo.OSImage)
+		}
+		if report.NodeInfo.ContainerRuntime != "" {
+			printField(w, "  Container runtime", report.NodeInfo.ContainerRuntime)
+		}
+		if report.NodeInfo.KubeletVersion != "" {
+			printField(w, "  Kubelet version  ", report.NodeInfo.KubeletVersion)
+		}
+		if len(report.NodeInfo.Taints) > 0 {
+			labelStyle.Fprintln(w, "  Taints           ")
+			for _, taint := range report.NodeInfo.Taints {
+				warnStyle.Fprintf(w, "    • %s\n", taint)
+			}
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Scheduling info
+	if report.Scheduling != nil {
+		if len(report.Scheduling.NodeSelector) > 0 || len(report.Scheduling.Tolerations) > 0 || len(report.Scheduling.AffinityRules) > 0 {
+			headerStyle.Fprintln(w, " Scheduling Constraints")
+			if len(report.Scheduling.NodeSelector) > 0 {
+				labelStyle.Fprintln(w, "  Node selector    ")
+				for k, v := range report.Scheduling.NodeSelector {
+					valueStyle.Fprintf(w, "    • %s = %s\n", k, v)
+				}
+			}
+			if len(report.Scheduling.Tolerations) > 0 {
+				labelStyle.Fprintln(w, "  Tolerations       ")
+				for _, tol := range report.Scheduling.Tolerations {
+					valueStyle.Fprintf(w, "    • %s\n", tol)
+				}
+			}
+			if len(report.Scheduling.AffinityRules) > 0 {
+				labelStyle.Fprintln(w, "  Affinity rules    ")
+				for _, rule := range report.Scheduling.AffinityRules {
+					valueStyle.Fprintf(w, "    • %s\n", rule)
+				}
+			}
+			fmt.Fprintln(w)
+		}
+	}
+
+	// PVCs
+	if len(report.PVCs) > 0 {
+		headerStyle.Fprintln(w, " Persistent Volume Claims")
+		for _, pvc := range report.PVCs {
+			labelStyle.Fprintf(w, "  • %s ", pvc.Name)
+			if !pvc.Bound {
+				causeStyle.Fprintf(w, "(not bound) ")
+			} else {
+				greenStyle.Fprintf(w, "(bound) ")
+			}
+			if pvc.Capacity != "" {
+				valueStyle.Fprintf(w, " %s", pvc.Capacity)
+			}
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Resource quota
+	if report.ResourceQuota != nil {
+		headerStyle.Fprintln(w, " Resource Quota")
+		printField(w, "  Name             ", report.ResourceQuota.Name)
+		printField(w, "  CPU (hard/used)  ", fmt.Sprintf("%s / %s", report.ResourceQuota.HardCPU, report.ResourceQuota.UsedCPU))
+		printField(w, "  Memory (hard/used)", fmt.Sprintf("%s / %s", report.ResourceQuota.HardMemory, report.ResourceQuota.UsedMemory))
+		printField(w, "  Pods (hard/used)  ", fmt.Sprintf("%s / %s", report.ResourceQuota.HardPods, report.ResourceQuota.UsedPods))
+		fmt.Fprintln(w)
+	}
+
 	// Logs
 	if report.LogLines != "" {
 		headerStyle.Fprintf(w, " Last %d log lines (before death)\n", report.LogLineCount)
@@ -122,6 +203,15 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 		headerStyle.Fprintln(w, " Recommendation")
 		for _, rec := range report.Recommendations {
 			greenStyle.Fprintf(w, "  • %s\n", rec)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Kubectl commands
+	if len(report.KubectlCommands) > 0 {
+		headerStyle.Fprintln(w, " Suggested kubectl commands")
+		for _, cmd := range report.KubectlCommands {
+			valueStyle.Fprintf(w, "  $ %s\n", cmd)
 		}
 		fmt.Fprintln(w)
 	}
