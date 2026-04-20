@@ -39,6 +39,10 @@ func formatMarkdown(w io.Writer, report *analyzer.Report) error {
 		fmt.Fprintf(w, "| Field | Value |\n")
 		fmt.Fprintf(w, "|---|---|\n")
 		fmt.Fprintf(w, "| State | %s |\n", c.State)
+		fmt.Fprintf(w, "| Image | `%s` |\n", c.Image)
+		if c.ImageDigest != "" {
+			fmt.Fprintf(w, "| Image Digest | `%s` |\n", c.ImageDigest)
+		}
 		if c.Reason != "" {
 			fmt.Fprintf(w, "| Reason | %s |\n", c.Reason)
 		}
@@ -96,6 +100,78 @@ func formatMarkdown(w io.Writer, report *analyzer.Report) error {
 		if report.NodePressure.MemoryCapacity != "" {
 			fmt.Fprintf(w, "| Memory Capacity | %s |\n", report.NodePressure.MemoryCapacity)
 		}
+		fmt.Fprintln(w)
+	}
+
+	// Node info (container runtime)
+	if report.NodeInfo != nil {
+		fmt.Fprintf(w, "## Node Information\n\n")
+		fmt.Fprintf(w, "| Field | Value |\n")
+		fmt.Fprintf(w, "|---|---|\n")
+		if report.NodeInfo.KernelVersion != "" {
+			fmt.Fprintf(w, "| Kernel Version | %s |\n", report.NodeInfo.KernelVersion)
+		}
+		if report.NodeInfo.OSImage != "" {
+			fmt.Fprintf(w, "| OS Image | %s |\n", report.NodeInfo.OSImage)
+		}
+		if report.NodeInfo.ContainerRuntime != "" {
+			fmt.Fprintf(w, "| Container Runtime | %s |\n", report.NodeInfo.ContainerRuntime)
+		}
+		if report.NodeInfo.KubeletVersion != "" {
+			fmt.Fprintf(w, "| Kubelet Version | %s |\n", report.NodeInfo.KubeletVersion)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Referenced resources
+	if len(report.ReferencedResources) > 0 {
+		fmt.Fprintf(w, "## Referenced Resources\n\n")
+		fmt.Fprintf(w, "| Resource | Status |\n")
+		fmt.Fprintf(w, "|---|---|\n")
+		for _, res := range report.ReferencedResources {
+			status := "✅ exists"
+			if !res.Exists {
+				status = "❌ not found"
+			}
+			fmt.Fprintf(w, "| %s/%s | %s |\n", res.Kind, res.Name, status)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Network policies
+	if len(report.NetworkPolicies) > 0 {
+		fmt.Fprintf(w, "## Network Policies\n\n")
+		for _, np := range report.NetworkPolicies {
+			fmt.Fprintf(w, "### %s\n\n", np.Name)
+			fmt.Fprintf(w, "| Field | Value |\n")
+			fmt.Fprintf(w, "|---|---|\n")
+			if len(np.PodSelector) > 0 {
+				fmt.Fprintf(w, "| Pod Selector | %s |\n", strings.Join(np.PodSelector, ", "))
+			}
+			policyType := ""
+			if np.Ingress {
+				policyType += "ingress "
+			}
+			if np.Egress {
+				policyType += "egress"
+			}
+			if policyType != "" {
+				fmt.Fprintf(w, "| Type | %s |\n", strings.TrimSpace(policyType))
+			}
+			fmt.Fprintln(w)
+		}
+	}
+
+	// Namespace stats
+	if len(report.NamespaceStats) > 0 {
+		fmt.Fprintf(w, "## Namespace Pod Statistics\n\n")
+		fmt.Fprintf(w, "| State | Count |\n")
+		fmt.Fprintf(w, "|---|---|\n")
+		fmt.Fprintf(w, "| Total | %d |\n", report.NamespaceStats["total"])
+		fmt.Fprintf(w, "| Running | %d |\n", report.NamespaceStats["running"])
+		fmt.Fprintf(w, "| Pending | %d |\n", report.NamespaceStats["pending"])
+		fmt.Fprintf(w, "| Failed | %d |\n", report.NamespaceStats["failed"])
+		fmt.Fprintf(w, "| Succeeded | %d |\n", report.NamespaceStats["succeeded"])
 		fmt.Fprintln(w)
 	}
 

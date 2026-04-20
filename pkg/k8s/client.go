@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -647,6 +648,23 @@ type QuotaInfo struct {
 	AtPods     string
 }
 
+// ReferencedResource holds information about a referenced ConfigMap or Secret.
+type ReferencedResource struct {
+	Name      string
+	Kind      string
+	Namespace string
+	Exists    bool
+}
+
+// NetworkPolicyInfo holds network policy information.
+type NetworkPolicyInfo struct {
+	Name        string
+	Namespace   string
+	PodSelector []string
+	Ingress     bool
+	Egress      bool
+}
+
 // GetResourceQuota retrieves namespace resource quota information.
 func (c *Client) GetResourceQuota(namespace string) (*QuotaInfo, error) {
 	ctx := context.Background()
@@ -686,4 +704,184 @@ func (c *Client) GetResourceQuota(namespace string) (*QuotaInfo, error) {
 	}
 
 	return &q, nil
+}
+
+// ValidateReferencedResources checks if ConfigMaps and Secrets referenced by the pod exist.
+func (c *Client) ValidateReferencedResources(namespace string, pod *corev1.Pod) ([]ReferencedResource, error) {
+	var resources []ReferencedResource
+
+	// Check ConfigMaps from env variables
+	for _, container := range pod.Spec.Containers {
+		for _, env := range container.EnvFrom {
+			if env.ConfigMapRef != nil {
+				exists := c.checkConfigMapExists(namespace, env.ConfigMapRef.Name)
+				resources = append(resources, ReferencedResource{
+					Name:      env.ConfigMapRef.Name,
+					Kind:      "ConfigMap",
+					Namespace: namespace,
+					Exists:    exists,
+				})
+			}
+			if env.SecretRef != nil {
+				exists := c.checkSecretExists(namespace, env.SecretRef.Name)
+				resources = append(resources, ReferencedResource{
+					Name:      env.SecretRef.Name,
+					Kind:      "Secret",
+					Namespace: namespace,
+					Exists:    exists,
+				})
+			}
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom != nil && env.ValueFrom.ConfigMapKeyRef != nil {
+				exists := c.checkConfigMapExists(namespace, env.ValueFrom.ConfigMapKeyRef.Name)
+				resources = append(resources, ReferencedResource{
+					Name:      env.ValueFrom.ConfigMapKeyRef.Name,
+					Kind:      "ConfigMap",
+					Namespace: namespace,
+					Exists:    exists,
+				})
+			}
+			if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+				exists := c.checkSecretExists(namespace, env.ValueFrom.SecretKeyRef.Name)
+				resources = append(resources, ReferencedResource{
+					Name:      env.ValueFrom.SecretKeyRef.Name,
+					Kind:      "Secret",
+					Namespace: namespace,
+					Exists:    exists,
+				})
+			}
+		}
+	}
+
+	// Check ConfigMaps/Secrets from volumes
+	for _, volume := range pod.Spec.Volumes {
+		if volume.ConfigMap != nil {
+			exists := c.checkConfigMapExists(namespace, volume.ConfigMap.Name)
+			resources = append(resources, ReferencedResource{
+				Name:      volume.ConfigMap.Name,
+				Kind:      "ConfigMap",
+				Namespace: namespace,
+				Exists:    exists,
+			})
+		}
+		if volume.Secret != nil {
+			exists := c.checkSecretExists(namespace, volume.Secret.SecretName)
+			resources = append(resources, ReferencedResource{
+				Name:      volume.Secret.SecretName,
+				Kind:      "Secret",
+				Namespace: namespace,
+				Exists:    exists,
+			})
+		}
+	}
+
+	return resources, nil
+}
+
+func (c *Client) checkConfigMapExists(namespace, name string) bool {
+	ctx := context.Background()
+	_, err := c.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+	return err == nil
+}
+
+func (c *Client) checkSecretExists(namespace, name string) bool {
+	ctx := context.Background()
+	_, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	return err == nil
+}
+
+// CheckNetworkPolicies checks if network policies might affect the pod.
+func (c *Client) CheckNetworkPolicies(namespace string, podLabels map[string]string) ([]NetworkPolicyInfo, error) {
+	ctx := context.Background()
+
+	// Get network policies in the namespace
+	policyList, err := c.clientset.NetworkingV1().NetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list network policies: %w", err)
+	}
+
+	var policies []NetworkPolicyInfo
+	for _, policy := range policyList.Items {
+		// Check if this policy applies to the pod
+		if policyMatchesPod(&policy, podLabels) {
+			var selectors []string
+			for k, v := range policy.Spec.PodSelector.MatchLabels {
+				selectors = append(selectors, fmt.Sprintf("%s=%s", k, v))
+			}
+
+			policies = append(policies, NetworkPolicyInfo{
+				Name:        policy.Name,
+				Namespace:   namespace,
+				PodSelector: selectors,
+				Ingress:     policy.Spec.Ingress != nil,
+				Egress:      policy.Spec.Egress != nil,
+			})
+		}
+	}
+
+	return policies, nil
+}
+
+func policyMatchesPod(policy *networkingv1.NetworkPolicy, podLabels map[string]string) bool {
+	// If no selector, applies to all pods in namespace
+	if len(policy.Spec.PodSelector.MatchLabels) == 0 && len(policy.Spec.PodSelector.MatchExpressions) == 0 {
+		return true
+	}
+
+	// Check label match
+	for k, v := range policy.Spec.PodSelector.MatchLabels {
+		if podValue, exists := podLabels[k]; !exists || podValue != v {
+			return false
+		}
+	}
+
+	// For simplicity, skip complex match expressions for now
+	return true
+}
+
+// GetPod retrieves the raw Pod object.
+func (c *Client) GetPod(namespace, name string) (*corev1.Pod, error) {
+	ctx := context.Background()
+	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod %s/%s: %w", namespace, name, err)
+	}
+	return pod, nil
+}
+
+// GetNamespacePodStats returns statistics about pods in a namespace.
+func (c *Client) GetNamespacePodStats(namespace string) (map[string]int32, error) {
+	ctx := context.Background()
+	podList, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	stats := map[string]int32{
+		"total":     0,
+		"running":   0,
+		"pending":   0,
+		"failed":    0,
+		"succeeded": 0,
+		"unknown":   0,
+	}
+
+	for _, pod := range podList.Items {
+		stats["total"]++
+		switch pod.Status.Phase {
+		case corev1.PodRunning:
+			stats["running"]++
+		case corev1.PodPending:
+			stats["pending"]++
+		case corev1.PodFailed:
+			stats["failed"]++
+		case corev1.PodSucceeded:
+			stats["succeeded"]++
+		default:
+			stats["unknown"]++
+		}
+	}
+
+	return stats, nil
 }

@@ -20,6 +20,7 @@ var (
 	noRecommendations bool
 	since             string
 	listMode          bool
+	namespaceAnalysis bool
 )
 
 var rootCmd = &cobra.Command{
@@ -55,6 +56,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&noRecommendations, "no-recommendations", false, "Skip the recommendations section")
 	rootCmd.Flags().StringVar(&since, "since", "24h", "Look at pods that died within duration (e.g. 2h, 30m)")
 	rootCmd.Flags().BoolVar(&listMode, "list", false, "List all recently dead pods in the namespace")
+	rootCmd.Flags().BoolVar(&namespaceAnalysis, "namespace-analysis", false, "Include namespace-wide analysis in the report")
 }
 
 func Execute() error {
@@ -95,6 +97,11 @@ func runListMode(client *k8s.Client, sinceDuration time.Duration) error {
 }
 
 func runInspectMode(client *k8s.Client, podName string, sinceDuration time.Duration) error {
+	pod, err := client.GetPod(namespace, podName)
+	if err != nil {
+		return fmt.Errorf("failed to get pod: %w", err)
+	}
+
 	podInfo, err := client.GetPodInfo(namespace, podName)
 	if err != nil {
 		return fmt.Errorf("failed to get pod info: %w", err)
@@ -139,7 +146,28 @@ func runInspectMode(client *k8s.Client, podName string, sinceDuration time.Durat
 		quota = nil
 	}
 
-	report := analyzer.Analyze(podInfo, events, logs, nodeConditions, logLines, nodeInfo, pvcs, quota)
+	// New features
+	var referencedResources []k8s.ReferencedResource
+	referencedResources, err = client.ValidateReferencedResources(namespace, pod)
+	if err != nil {
+		referencedResources = nil
+	}
+
+	var networkPolicies []k8s.NetworkPolicyInfo
+	networkPolicies, err = client.CheckNetworkPolicies(namespace, pod.Labels)
+	if err != nil {
+		networkPolicies = nil
+	}
+
+	var namespaceStats map[string]int32
+	if namespaceAnalysis {
+		namespaceStats, err = client.GetNamespacePodStats(namespace)
+		if err != nil {
+			namespaceStats = nil
+		}
+	}
+
+	report := analyzer.Analyze(podInfo, events, logs, nodeConditions, logLines, nodeInfo, pvcs, quota, referencedResources, networkPolicies, namespaceStats)
 	report.NoRecommendations = noRecommendations
 
 	f := formatter.New(outputFormat)

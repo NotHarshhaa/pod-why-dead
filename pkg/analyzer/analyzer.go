@@ -10,31 +10,52 @@ import (
 
 // Report is the structured death report.
 type Report struct {
-	PodName             string            `json:"pod_name"`
-	Namespace           string            `json:"namespace"`
-	NodeName            string            `json:"node_name"`
-	Cause               string            `json:"cause"`
-	CauseDetail         string            `json:"cause_detail"`
-	ExitCodeExplanation string            `json:"exit_code_explanation,omitempty"`
-	Containers          []ContainerReport `json:"containers"`
-	Timeline            []TimelineEntry   `json:"timeline"`
-	NodePressure        *NodePressure     `json:"node_pressure,omitempty"`
-	NodeInfo            *NodeInfo         `json:"node_info,omitempty"`
-	PVCs                []PVCReport       `json:"pvcs,omitempty"`
-	ResourceQuota       *QuotaReport      `json:"resource_quota,omitempty"`
-	Scheduling          *SchedulingInfo   `json:"scheduling,omitempty"`
-	LogLines            string            `json:"log_lines,omitempty"`
-	LogLineCount        int               `json:"log_line_count"`
-	Recommendations     []string          `json:"recommendations,omitempty"`
-	KubectlCommands     []string          `json:"kubectl_commands,omitempty"`
-	RestartCount        int32             `json:"restart_count"`
-	NoRecommendations   bool              `json:"-"`
+	PodName             string               `json:"pod_name"`
+	Namespace           string               `json:"namespace"`
+	NodeName            string               `json:"node_name"`
+	Cause               string               `json:"cause"`
+	CauseDetail         string               `json:"cause_detail"`
+	ExitCodeExplanation string               `json:"exit_code_explanation,omitempty"`
+	Containers          []ContainerReport    `json:"containers"`
+	Timeline            []TimelineEntry      `json:"timeline"`
+	NodePressure        *NodePressure        `json:"node_pressure,omitempty"`
+	NodeInfo            *NodeInfo            `json:"node_info,omitempty"`
+	PVCs                []PVCReport          `json:"pvcs,omitempty"`
+	ResourceQuota       *QuotaReport         `json:"resource_quota,omitempty"`
+	Scheduling          *SchedulingInfo      `json:"scheduling,omitempty"`
+	LogLines            string               `json:"log_lines,omitempty"`
+	LogLineCount        int                  `json:"log_line_count"`
+	Recommendations     []string             `json:"recommendations,omitempty"`
+	KubectlCommands     []string             `json:"kubectl_commands,omitempty"`
+	RestartCount        int32                `json:"restart_count"`
+	NoRecommendations   bool                 `json:"-"`
+	ReferencedResources []ReferencedResource `json:"referenced_resources,omitempty"`
+	NetworkPolicies     []NetworkPolicyInfo  `json:"network_policies,omitempty"`
+	NamespaceStats      map[string]int32     `json:"namespace_stats,omitempty"`
+}
+
+// ReferencedResource holds information about a referenced ConfigMap or Secret.
+type ReferencedResource struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Exists    bool   `json:"exists"`
+}
+
+// NetworkPolicyInfo holds network policy information.
+type NetworkPolicyInfo struct {
+	Name        string   `json:"name"`
+	Namespace   string   `json:"namespace"`
+	PodSelector []string `json:"pod_selector"`
+	Ingress     bool     `json:"ingress"`
+	Egress      bool     `json:"egress"`
 }
 
 // ContainerReport holds per-container death details.
 type ContainerReport struct {
 	Name          string `json:"name"`
 	Image         string `json:"image"`
+	ImageDigest   string `json:"image_digest,omitempty"`
 	ExitCode      int32  `json:"exit_code"`
 	Signal        int32  `json:"signal,omitempty"`
 	Reason        string `json:"reason"`
@@ -111,7 +132,8 @@ type SchedulingInfo struct {
 
 // Analyze builds a full death report from gathered Kubernetes data.
 func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeConditions *k8s.NodeConditions, logLineCount int,
-	nodeInfo *k8s.NodeInfo, pvcs []k8s.PVCInfo, quota *k8s.QuotaInfo) *Report {
+	nodeInfo *k8s.NodeInfo, pvcs []k8s.PVCInfo, quota *k8s.QuotaInfo, referencedResources []k8s.ReferencedResource,
+	networkPolicies []k8s.NetworkPolicyInfo, namespaceStats map[string]int32) *Report {
 	report := &Report{
 		PodName:      podInfo.Name,
 		Namespace:    podInfo.Namespace,
@@ -179,6 +201,7 @@ func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeCond
 		cr := ContainerReport{
 			Name:          c.Name,
 			Image:         c.Image,
+			ImageDigest:   podInfo.ImageDigest,
 			ExitCode:      c.ExitCode,
 			Signal:        c.Signal,
 			Reason:        c.Reason,
@@ -209,6 +232,36 @@ func Analyze(podInfo *k8s.PodInfo, events []k8s.EventInfo, logs string, nodeCond
 		}
 
 		report.Containers = append(report.Containers, cr)
+	}
+
+	// Add referenced resources
+	if len(referencedResources) > 0 {
+		for _, r := range referencedResources {
+			report.ReferencedResources = append(report.ReferencedResources, ReferencedResource{
+				Name:      r.Name,
+				Kind:      r.Kind,
+				Namespace: r.Namespace,
+				Exists:    r.Exists,
+			})
+		}
+	}
+
+	// Add network policies
+	if len(networkPolicies) > 0 {
+		for _, np := range networkPolicies {
+			report.NetworkPolicies = append(report.NetworkPolicies, NetworkPolicyInfo{
+				Name:        np.Name,
+				Namespace:   np.Namespace,
+				PodSelector: np.PodSelector,
+				Ingress:     np.Ingress,
+				Egress:      np.Egress,
+			})
+		}
+	}
+
+	// Add namespace stats
+	if namespaceStats != nil {
+		report.NamespaceStats = namespaceStats
 	}
 
 	// Determine cause

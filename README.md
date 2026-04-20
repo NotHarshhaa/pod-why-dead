@@ -14,8 +14,6 @@ Engineers waste 10–20 minutes every time a pod dies — running `kubectl descr
 
 $ pod-why-dead -n production my-api-7f9d4b-xkzp2
 
-
-
  Pod Death Report ─────────────────────────────────────
 
   Pod        my-api-7f9d4b-xkzp2
@@ -23,8 +21,6 @@ $ pod-why-dead -n production my-api-7f9d4b-xkzp2
   Namespace  production
 
   Node       ip-10-0-1-42.ec2.internal
-
-
 
  Cause: OOMKilled
 
@@ -36,8 +32,6 @@ $ pod-why-dead -n production my-api-7f9d4b-xkzp2
 
   Killed at     2024-11-14 09:42:17 UTC
 
-
-
  Timeline
 
   09:41:03  Pod scheduled on ip-10-0-1-42
@@ -48,15 +42,11 @@ $ pod-why-dead -n production my-api-7f9d4b-xkzp2
 
   09:42:17  OOMKilled by kernel
 
-
-
  Node Pressure at time of death
 
   Memory pressure  true
 
   Node available   48Mi of 8Gi
-
-
 
  Last 20 log lines (before death)
 
@@ -65,8 +55,6 @@ $ pod-why-dead -n production my-api-7f9d4b-xkzp2
   [09:42:16] ERROR Failed to allocate buffer: out of memory
 
   [09:42:17] FATAL process killed
-
-
 
  Recommendation
 
@@ -241,6 +229,10 @@ kubectl why-dead -n <namespace> <pod-name>
 
 | `--since` | Look at pods that died within duration (e.g. `2h`, `30m`) | `24h` |
 
+| `--namespace-analysis` | Include namespace-wide pod statistics | `false` |
+
+| `--list` | List all recently dead pods in the namespace | `false` |
+
 
 
 ### Output formats
@@ -293,6 +285,36 @@ pod-why-dead -n production --list --since 1h
 
 
 
+### Namespace-wide analysis
+
+```bash
+
+# Include namespace pod statistics in the report
+
+pod-why-dead -n production my-pod --namespace-analysis
+
+```
+
+
+
+```
+
+ Namespace Pod Statistics
+
+  Total pods   15
+
+  Running      12
+
+  Pending      0
+
+  Failed       3
+
+  Succeeded    0
+
+```
+
+
+
 ---
 
 
@@ -313,7 +335,7 @@ pod-why-dead -n production --list --since 1h
 
 - **Node conditions at death** — MemoryPressure, DiskPressure, PIDPressure
 
-- **Node information** — kernel version, OS, container runtime, taints, labels
+- **Node information** — kernel version, OS, container runtime, kubelet version, taints, labels
 
 - **Scheduling constraints** — node selectors, tolerations, affinity rules
 
@@ -326,6 +348,14 @@ pod-why-dead -n production --list --since 1h
 - **Restart history** — first death or 47th?
 
 - **Liveness / readiness probe failures** — did a probe kill it?
+
+- **Image digest** — actual SHA256 digest of the image being used
+
+- **ConfigMap/Secret validation** — checks if referenced resources exist
+
+- **Network policy analysis** — identifies network policies that might affect the pod
+
+- **Namespace-wide statistics** — overall pod health in the namespace (with `--namespace-analysis`)
 
 - **Recommendations** — concrete next steps based on the cause
 
@@ -372,7 +402,7 @@ pod-why-dead -n production --list --since 1h
 
 - A valid `kubeconfig` (same as `kubectl`)
 
-- RBAC: `get` and `list` on `pods`, `pods/log`, `events`, `nodes`, `persistentvolumeclaims`, `resourcequotas`
+- RBAC: `get` and `list` on `pods`, `pods/log`, `events`, `nodes`, `persistentvolumeclaims`, `resourcequotas`, `configmaps`, `secrets`, `networkpolicies`
 
 
 
@@ -385,7 +415,10 @@ metadata:
   name: pod-why-dead-reader
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "events", "nodes", "persistentvolumeclaims", "resourcequotas"]
+    resources: ["pods", "pods/log", "events", "nodes", "persistentvolumeclaims", "resourcequotas", "configmaps", "secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
     verbs: ["get", "list"]
 ```
 

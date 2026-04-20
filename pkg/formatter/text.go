@@ -57,6 +57,10 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 		}
 		fmt.Fprintln(w)
 
+		printField(w, "  Image          ", c.Image)
+		if c.ImageDigest != "" {
+			printField(w, "  Image digest   ", c.ImageDigest)
+		}
 		if c.MemoryLimit != "" {
 			printField(w, "  Memory limit   ", c.MemoryLimit)
 		}
@@ -186,6 +190,58 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 		printField(w, "  CPU (hard/used)  ", fmt.Sprintf("%s / %s", report.ResourceQuota.HardCPU, report.ResourceQuota.UsedCPU))
 		printField(w, "  Memory (hard/used)", fmt.Sprintf("%s / %s", report.ResourceQuota.HardMemory, report.ResourceQuota.UsedMemory))
 		printField(w, "  Pods (hard/used)  ", fmt.Sprintf("%s / %s", report.ResourceQuota.HardPods, report.ResourceQuota.UsedPods))
+		fmt.Fprintln(w)
+	}
+
+	// Referenced resources (ConfigMaps/Secrets)
+	if len(report.ReferencedResources) > 0 {
+		headerStyle.Fprintln(w, " Referenced Resources")
+		for _, res := range report.ReferencedResources {
+			labelStyle.Fprintf(w, "  • %s/%s ", res.Kind, res.Name)
+			if res.Exists {
+				greenStyle.Fprintf(w, "(exists)")
+			} else {
+				causeStyle.Fprintf(w, "(not found)")
+			}
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Network policies
+	if len(report.NetworkPolicies) > 0 {
+		headerStyle.Fprintln(w, " Network Policies")
+		for _, np := range report.NetworkPolicies {
+			labelStyle.Fprintf(w, "  • %s\n", np.Name)
+			if len(np.PodSelector) > 0 {
+				printField(w, "    Pod selector  ", strings.Join(np.PodSelector, ", "))
+			}
+			policyType := ""
+			if np.Ingress {
+				policyType += "ingress "
+			}
+			if np.Egress {
+				policyType += "egress"
+			}
+			if policyType != "" {
+				printField(w, "    Type          ", strings.TrimSpace(policyType))
+			}
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Namespace stats
+	if len(report.NamespaceStats) > 0 {
+		headerStyle.Fprintln(w, " Namespace Pod Statistics")
+		printField(w, "  Total pods   ", strconv.Itoa(int(report.NamespaceStats["total"])))
+		printField(w, "  Running      ", strconv.Itoa(int(report.NamespaceStats["running"])))
+		printField(w, "  Pending      ", strconv.Itoa(int(report.NamespaceStats["pending"])))
+		if report.NamespaceStats["failed"] > 0 {
+			causeStyle.Fprintf(w, "  Failed       %d\n", report.NamespaceStats["failed"])
+		} else {
+			printField(w, "  Failed       ", "0")
+		}
+		printField(w, "  Succeeded    ", strconv.Itoa(int(report.NamespaceStats["succeeded"])))
 		fmt.Fprintln(w)
 	}
 
