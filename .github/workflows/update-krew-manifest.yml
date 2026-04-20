@@ -30,6 +30,10 @@ jobs:
           else
             VERSION=${GITHUB_REF#refs/tags/}
           fi
+          # Ensure version starts with 'v'
+          if [[ ! $VERSION =~ ^v ]]; then
+            VERSION="v$VERSION"
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Download checksums from release
