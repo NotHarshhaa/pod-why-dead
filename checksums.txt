@@ -1,0 +1,6 @@
+94069a7debab61a213afdd9b25007de2671e87bdef1e897dc9a079d1eca342e9  pod-why-dead_0.2.0_darwin_amd64.tar.gz
+cb255974a01aefe859b950c22b1e3ef253ac2fd9a37331bdfdb22a1ecacbfe5f  pod-why-dead_0.2.0_darwin_arm64.tar.gz
+689abf6ce8a8bfcb28109dba41b22574c0c86fc5508466edf5d04c1259cc0814  pod-why-dead_0.2.0_linux_amd64.tar.gz
+cd70b64aa7e3e9116c062c8d51b9cfb692606723258b4abe256ce030d7a3f0d7  pod-why-dead_0.2.0_linux_arm64.tar.gz
+c38e4a204c854eb606e5e09ac5adb1c5b55f9ee54706594c0716a2a8eaceb1c0  pod-why-dead_0.2.0_windows_amd64.zip
+24ae38d066f09e7951b8578adef3e948e2f1f42958a975cca758ad5085e8d389  pod-why-dead_0.2.0_windows_arm64.zip
