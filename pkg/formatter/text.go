@@ -3,6 +3,7 @@ package formatter
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
@@ -72,7 +73,7 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 			printField(w, "  Killed at      ", c.KilledAt)
 		}
 		if c.RestartCount > 0 {
-			printField(w, "  Restart count  ", fmt.Sprintf("%d", c.RestartCount))
+			printField(w, "  Restart count  ", strconv.Itoa(int(c.RestartCount)))
 		}
 		if c.ProbeFailure != "" {
 			warnStyle.Fprintf(w, "  Probe failure  %s\n", c.ProbeFailure)
