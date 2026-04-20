@@ -176,7 +176,7 @@ func pendingRecommendations(report *Report, commands []string) ([]string, []stri
 		recs = append(recs, "Review node affinity rules — they may be too restrictive for the available nodes.")
 	}
 	recs = append(recs, "Run 'kubectl describe nodes' to see available resources across the cluster.")
-	commands = append(commands, fmt.Sprintf("kubectl describe nodes"))
+	commands = append(commands, "kubectl describe nodes")
 	if report.Scheduling != nil && len(report.Scheduling.NodeSelector) > 0 {
 		commands = append(commands, fmt.Sprintf("kubectl get nodes -l %s", formatNodeSelector(report.Scheduling.NodeSelector)))
 	}
