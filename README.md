@@ -1,17 +1,10 @@
 # pod-why-dead
 
-
-
 > **One command. Full death story of any Kubernetes pod.**
-
-
 
 Engineers waste 10–20 minutes every time a pod dies — running `kubectl describe`, `kubectl logs --previous`, `kubectl get events`, cross-referencing node pressure, checking resource limits. `pod-why-dead` does all of that in one shot and hands you a structured postmortem in seconds.
 
-
-
 ```bash
-
 $ pod-why-dead -n production my-api-7f9d4b-xkzp2
 
  Pod Death Report ─────────────────────────────────────
@@ -65,22 +58,13 @@ $ pod-why-dead -n production my-api-7f9d4b-xkzp2
   before scheduling — consider a PodDisruptionBudget or node affinity rule.
 
 ──────────────────────────────────────────────────────
-
 ```
-
-
 
 ---
 
-
-
 ## Why this exists
 
-
-
 When a pod dies in Kubernetes, the information you need is scattered across five different commands. Nobody has time for that during an incident.
-
-
 
 | What you need | Without pod-why-dead | With pod-why-dead |
 |---|---|---|
@@ -90,26 +74,20 @@ When a pod dies in Kubernetes, the information you need is scattered across five
 | Resource usage | `kubectl top pod` (if still alive) | Reconstructed |
 | Event timeline | `kubectl get events --field-selector` | Instant |
 
-
-
 ---
 
-
-
 ## Install
-
-
 
 ### Quick Install (Recommended)
 
 **Linux / macOS:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/master/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/master/install.ps1 | iex
 ```
 
 ---
@@ -134,7 +112,7 @@ go install github.com/NotHarshhaa/pod-why-dead@latest
 
 **kubectl plugin (krew - manual install):**
 ```bash
-kubectl krew install --manifest-url=https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/main/krew/pod-why-dead.yaml --manifest-file=pod-why-dead.yaml pod-why-dead
+kubectl krew install --manifest-url=https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/master/krew/pod-why-dead.yaml --manifest-file=pod-why-dead.yaml pod-why-dead
 kubectl pod-why-dead -n production my-pod-name
 ```
 
@@ -181,143 +159,77 @@ Expand-Archive -Path "pod-why-dead.zip" -DestinationPath "."
 - **macOS**: amd64 (Intel), arm64 (Apple Silicon)
 - **Windows**: amd64
 
-
-
 ---
 
-
-
 ## Usage
-
-
 
 ### Basic
 
 ```bash
-
 # Inspect a specific pod
-
 pod-why-dead -n <namespace> <pod-name>
 
-
-
 # Also works as kubectl plugin
-
 kubectl why-dead -n <namespace> <pod-name>
-
 ```
-
-
 
 ### Flags
 
-
-
 | Flag | Description | Default |
-
 |---|---|---|
-
 | `-n, --namespace` | Kubernetes namespace | `default` |
-
 | `--context` | kubeconfig context to use | current context |
-
 | `--log-lines` | Number of previous log lines to show | `20` |
-
 | `--output` | Output format: `text`, `json`, `markdown` | `text` |
-
 | `--no-recommendations` | Skip the recommendations section | `false` |
-
 | `--since` | Look at pods that died within duration (e.g. `2h`, `30m`) | `24h` |
-
 | `--namespace-analysis` | Include namespace-wide pod statistics | `false` |
-
 | `--list` | List all recently dead pods in the namespace | `false` |
-
-
 
 ### Output formats
 
-
-
 ```bash
-
 # Default pretty-printed terminal output
-
 pod-why-dead -n production my-pod
 
-
-
 # JSON (pipe to jq, store in incident log)
-
 pod-why-dead -n production my-pod --output json | jq .cause
 
-
-
 # Markdown (paste into incident report / Notion / Confluence)
-
 pod-why-dead -n production my-pod --output markdown > incident.md
-
 ```
-
-
 
 ### List all recently dead pods in a namespace
 
 ```bash
-
 pod-why-dead -n production --list --since 1h
-
 ```
 
 
-
 ```
-
  Recently Dead Pods (last 1h) — namespace: production
-
   my-api-7f9d4b-xkzp2      OOMKilled     09:42:17
-
   worker-6c8f9d-mnbv1       CrashLoopBack 09:51:03
-
   scheduler-5d7b2a-pqrs8    Error (1)     10:03:44
-
 ```
-
-
 
 ### Namespace-wide analysis
 
 ```bash
-
 # Include namespace pod statistics in the report
-
 pod-why-dead -n production my-pod --namespace-analysis
-
 ```
 
-
-
 ```
-
  Namespace Pod Statistics
-
   Total pods   15
-
   Running      12
-
   Pending      0
-
   Failed       3
-
   Succeeded    0
-
 ```
-
-
 
 ---
-
-
 
 ## What it checks
 
@@ -361,50 +273,27 @@ pod-why-dead -n production my-pod --namespace-analysis
 
 - **Suggested kubectl commands** — ready-to-run commands for debugging
 
-
-
 ---
-
 
 ## Death causes handled
 
-
-
 | Cause | What pod-why-dead shows |
-
 |---|---|
-
 | `OOMKilled` | Memory limit, peak usage, node memory pressure |
-
 | `CrashLoopBackOff` | Restart count, backoff duration, repeated error pattern |
-
 | `Error (exit code N)` | Exit code, last log lines, container command |
-
 | `Evicted` | Eviction reason, node resource that triggered it |
-
 | `Liveness probe failed` | Probe config, failure count, what the probe hit |
-
 | `ImagePullBackOff` | Image name, registry error message |
-
 | `Pending → never started` | Scheduling failure reason (insufficient CPU/memory/taints) |
-
-
 
 ---
 
-
-
 ## Requirements
 
-
-
 - Go 1.21+
-
 - A valid `kubeconfig` (same as `kubectl`)
-
 - RBAC: `get` and `list` on `pods`, `pods/log`, `events`, `nodes`, `persistentvolumeclaims`, `resourcequotas`, `configmaps`, `secrets`, `networkpolicies`
-
-
 
 ### Minimal RBAC for read-only use
 
@@ -422,61 +311,31 @@ rules:
     verbs: ["get", "list"]
 ```
 
-
-
 ---
-
-
 
 ## Roadmap
 
-
-
 - [ ] `--watch` mode: continuously monitor a namespace and auto-report on new deaths
-
 - [ ] Slack / PagerDuty webhook output
-
 - [ ] Correlate with HPA / VPA events
-
 - [ ] Historical mode using past events from Loki / OpenSearch
-
 - [ ] GitHub Actions integration — auto-comment on PRs when staging pods die
 
-
-
 ---
-
-
 
 ## Contributing
 
-
-
 PRs are welcome. Please open an issue first for anything beyond small fixes.
 
-
-
 ```bash
-
 git clone https://github.com/NotHarshhaa/pod-why-dead
-
 cd pod-why-dead
-
 go mod tidy
-
 go run . -n default <your-pod-name>
-
 ```
-
-
 
 ---
 
-
-
 ## License
 
-
-
 MIT © [NotHarshhaa](https://github.com/NotHarshhaa)
-
