@@ -24,7 +24,8 @@ def update_manifest(version, checksums_file, manifest_file):
         'linux_arm64': 'linux',
         'darwin_amd64': 'darwin',
         'darwin_arm64': 'darwin',
-        'windows_amd64': 'windows'
+        'windows_amd64': 'windows',
+        'windows_arm64': 'windows'
     }
     
     for platform, os_name in platforms.items():

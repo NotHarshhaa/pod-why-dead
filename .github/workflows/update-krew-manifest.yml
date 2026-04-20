@@ -44,10 +44,10 @@ jobs:
         run: |
           python3 .github/scripts/update_krew_manifest.py ${{ steps.get_version.outputs.version }} checksums.txt krew/pod-why-dead.yaml
 
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
-        with:
-          title: "Update Krew manifest for ${{ steps.get_version.outputs.version }}"
-          body: "Automated update of Krew manifest with checksums for release ${{ steps.get_version.outputs.version }}"
-          branch: update-krew-manifest-${{ steps.get_version.outputs.version }}
-          commit-message: "Update Krew manifest for ${{ steps.get_version.outputs.version }}"
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add krew/pod-why-dead.yaml
+          git commit -m "Update Krew manifest for ${{ steps.get_version.outputs.version }}"
+          git push
