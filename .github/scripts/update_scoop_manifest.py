@@ -34,7 +34,7 @@ def update_scoop_manifest(version, checksums_file, manifest_file):
     print(f"Updated Scoop manifest to version {version}")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         print("Usage: update_scoop_manifest.py <version> <checksums_file> <manifest_file>")
         sys.exit(1)
     
