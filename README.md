@@ -112,53 +112,86 @@ When a pod dies in Kubernetes, the information you need is scattered across five
 
 
 
-### Homebrew (macOS / Linux)
+### Quick Install (Recommended)
 
+**Linux / macOS:**
 ```bash
+curl -sSL https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/main/install.sh | bash
+```
 
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/main/install.ps1 | iex
+```
+
+---
+
+### Package Managers
+
+**Homebrew (macOS / Linux):**
+```bash
 brew install NotHarshhaa/tap/pod-why-dead
-
 ```
 
+**Scoop (Windows):**
+```powershell
+scoop bucket add NotHarshhaa https://github.com/NotHarshhaa/scoop-bucket
+scoop install pod-why-dead
+```
 
-
-### Go install
-
+**Go install:**
 ```bash
-
 go install github.com/NotHarshhaa/pod-why-dead@latest
-
 ```
 
+**kubectl plugin (krew - manual install):**
+```bash
+kubectl krew install --manifest-url=https://raw.githubusercontent.com/NotHarshhaa/pod-why-dead/main/krew/pod-why-dead.yaml --manifest-file=pod-why-dead.yaml pod-why-dead
+kubectl pod-why-dead -n production my-pod-name
+```
 
+---
 
-### Binary (Linux/macOS/Windows)
+**Docker:**
+```bash
+# Pull the image
+docker pull ghcr.io/notharshhaa/pod-why-dead:latest
 
+# Run with kubeconfig mounted
+docker run --rm -v ~/.kube/config:/root/.kube/config ghcr.io/notharshhaa/pod-why-dead:latest -n production my-pod
+```
 
+---
+
+### Manual Binary Download
 
 Download from [Releases](https://github.com/NotHarshhaa/pod-why-dead/releases) and place in your `$PATH`.
 
-
-
+**Linux (amd64):**
 ```bash
-
-curl -sSL https://github.com/NotHarshhaa/pod-why-dead/releases/latest/download/pod-why-dead_linux_amd64 \
-
-  -o /usr/local/bin/pod-why-dead && chmod +x /usr/local/bin/pod-why-dead
-
+curl -sSL https://github.com/NotHarshhaa/pod-why-dead/releases/latest/download/pod-why-dead_linux_amd64.tar.gz | tar -xz
+sudo mv pod-why-dead /usr/local/bin/
 ```
 
-
-
-### kubectl plugin (krew)
-
+**macOS (Apple Silicon):**
 ```bash
-
-kubectl krew install pod-why-dead
-
-kubectl pod-why-dead -n production my-pod-name
-
+curl -sSL https://github.com/NotHarshhaa/pod-why-dead/releases/latest/download/pod-why-dead_darwin_arm64.tar.gz | tar -xz
+sudo mv pod-why-dead /usr/local/bin/
 ```
+
+**Windows:**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/NotHarshhaa/pod-why-dead/releases/latest/download/pod-why-dead_windows_amd64.zip" -OutFile "pod-why-dead.zip"
+Expand-Archive -Path "pod-why-dead.zip" -DestinationPath "."
+```
+
+---
+
+### Architecture Support
+
+- **Linux**: amd64, arm64
+- **macOS**: amd64 (Intel), arm64 (Apple Silicon)
+- **Windows**: amd64
 
 
 

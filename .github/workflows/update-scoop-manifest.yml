@@ -1,0 +1,49 @@
+name: Update Scoop Manifest
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pod-why-dead
+        uses: actions/checkout@v4
+        with:
+          repository: NotHarshhaa/pod-why-dead
+          fetch-depth: 0
+
+      - name: Checkout scoop-bucket
+        uses: actions/checkout@v4
+        with:
+          repository: NotHarshhaa/scoop-bucket
+          path: scoop-bucket
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Get release version
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download checksums from release
+        run: |
+          wget https://github.com/NotHarshhaa/pod-why-dead/releases/download/v${{ steps.get_version.outputs.version }}/checksums.txt
+
+      - name: Update Scoop manifest
+        run: |
+          python3 .github/scripts/update_scoop_manifest.py ${{ steps.get_version.outputs.version }} checksums.txt scoop-bucket/pod-why-dead.json
+
+      - name: Commit and push to scoop-bucket
+        working-directory: scoop-bucket
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pod-why-dead.json
+          git commit -m "Update pod-why-dead to v${{ steps.get_version.outputs.version }}"
+          git push

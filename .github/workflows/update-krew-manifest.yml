@@ -1,0 +1,39 @@
+name: Update Krew Manifest
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get release version
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download checksums from release
+        run: |
+          wget https://github.com/NotHarshhaa/pod-why-dead/releases/download/${{ steps.get_version.outputs.version }}/checksums.txt
+
+      - name: Update Krew manifest
+        run: |
+          python3 .github/scripts/update_krew_manifest.py ${{ steps.get_version.outputs.version }} checksums.txt krew/pod-why-dead.yaml
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "Update Krew manifest for ${{ steps.get_version.outputs.version }}"
+          body: "Automated update of Krew manifest with checksums for release ${{ steps.get_version.outputs.version }}"
+          branch: update-krew-manifest-${{ steps.get_version.outputs.version }}
+          commit-message: "Update Krew manifest for ${{ steps.get_version.outputs.version }}"

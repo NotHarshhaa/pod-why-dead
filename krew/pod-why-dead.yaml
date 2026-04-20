@@ -1,0 +1,71 @@
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: pod-why-dead
+spec:
+  version: "v0.2.0"
+  platforms:
+  - selector:
+      matchLabels:
+        os: linux
+        arch: amd64
+    uri: https://github.com/NotHarshhaa/pod-why-dead/releases/download/v0.2.0/pod-why-dead_0.2.0_linux_amd64.tar.gz
+    sha256: "" # Update this after first release
+    files:
+    - from: "./pod-why-dead"
+      to: "."
+    bin: "pod-why-dead"
+  - selector:
+      matchLabels:
+        os: linux
+        arch: arm64
+    uri: https://github.com/NotHarshhaa/pod-why-dead/releases/download/v0.2.0/pod-why-dead_0.2.0_linux_arm64.tar.gz
+    sha256: "" # Update this after first release
+    files:
+    - from: "./pod-why-dead"
+      to: "."
+    bin: "pod-why-dead"
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: amd64
+    uri: https://github.com/NotHarshhaa/pod-why-dead/releases/download/v0.2.0/pod-why-dead_0.2.0_darwin_amd64.tar.gz
+    sha256: "" # Update this after first release
+    files:
+    - from: "./pod-why-dead"
+      to: "."
+    bin: "pod-why-dead"
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: arm64
+    uri: https://github.com/NotHarshhaa/pod-why-dead/releases/download/v0.2.0/pod-why-dead_0.2.0_darwin_arm64.tar.gz
+    sha256: "" # Update this after first release
+    files:
+    - from: "./pod-why-dead"
+      to: "."
+    bin: "pod-why-dead"
+  - selector:
+      matchLabels:
+        os: windows
+        arch: amd64
+    uri: https://github.com/NotHarshhaa/pod-why-dead/releases/download/v0.2.0/pod-why-dead_0.2.0_windows_amd64.zip
+    sha256: "" # Update this after first release
+    files:
+    - from: "./pod-why-dead.exe"
+      to: "."
+    bin: "pod-why-dead.exe"
+  shortDescription: Full death story of any Kubernetes pod
+  homepage: https://github.com/NotHarshhaa/pod-why-dead
+  description: |
+    One command. Full death story of any Kubernetes pod.
+
+    pod-why-dead reconstructs the full picture from what Kubernetes still knows 
+    after a pod is gone: exit code, previous logs, event timeline, node conditions 
+    at death, resource usage, and provides actionable recommendations.
+
+    Usage:
+      $ kubectl pod-why-dead -n production my-pod-name
+
+    Or standalone:
+      $ pod-why-dead -n production my-pod-name
