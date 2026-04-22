@@ -29,7 +29,6 @@ var (
 	successIcon   = "✓"
 	errorIcon     = "✗"
 	warningIcon   = "⚠"
-	infoIcon      = "ℹ"
 )
 
 func renderStatus(active bool) string {
@@ -234,7 +233,7 @@ func formatText(w io.Writer, report *analyzer.Report) error {
 			if !res.Exists {
 				status = errorIcon + " not found"
 			}
-			resInfo := fmt.Sprintf("%s %s %s", labelStyle.Render("  • "+res.Kind+"/"+res.Name), status)
+			resInfo := fmt.Sprintf("%s %s", labelStyle.Render("  • "+res.Kind+"/"+res.Name), status)
 			fmt.Fprintln(w, resInfo)
 		}
 		fmt.Fprintln(w)
@@ -355,25 +354,3 @@ func formatDeadPodListText(w io.Writer, pods []k8s.DeadPodSummary, namespace, si
 	return nil
 }
 
-func printField(w io.Writer, label, value string) {
-	fmt.Fprint(w, labelStyle.Render(fmt.Sprintf("%s ", label)))
-	fmt.Fprintln(w, valueStyle.Render(value))
-}
-
-func printCondition(w io.Writer, label string, active bool) {
-	fmt.Fprint(w, labelStyle.Render(fmt.Sprintf("%s ", label)))
-	if active {
-		fmt.Fprintln(w, causeStyle.Render("true  ⚠"))
-	} else {
-		fmt.Fprintln(w, greenStyle.Render("false"))
-	}
-}
-
-func printNodeReady(w io.Writer, label string, ready bool) {
-	fmt.Fprint(w, labelStyle.Render(fmt.Sprintf("%s ", label)))
-	if ready {
-		fmt.Fprintln(w, greenStyle.Render("true"))
-	} else {
-		fmt.Fprintln(w, causeStyle.Render("false  ⚠"))
-	}
-}
