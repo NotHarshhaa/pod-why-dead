@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,6 +23,10 @@ var (
 	since             string
 	listMode          bool
 	namespaceAnalysis bool
+	allNamespaces     bool
+	filterCause       string
+	exportFile        string
+	verbose           bool
 )
 
 var rootCmd = &cobra.Command{
@@ -35,11 +41,23 @@ to give you a structured death report in seconds.`,
   # List all recently dead pods in a namespace
   pod-why-dead -n production --list --since 1h
 
+  # List dead pods across all namespaces
+  pod-why-dead --all-namespaces --list --since 1h
+
+  # Filter by specific death cause
+  pod-why-dead -n production --list --filter OOMKilled
+
   # Output as JSON
   pod-why-dead -n production my-pod --output json
 
   # Output as Markdown for incident reports
   pod-why-dead -n production my-pod --output markdown > incident.md
+
+  # Export report to file
+  pod-why-dead -n production my-pod --export report.json
+
+  # Verbose mode for debugging
+  pod-why-dead -n production my-pod --verbose
 
   # Use as kubectl plugin
   kubectl why-dead -n production my-pod-name`,
@@ -57,6 +75,10 @@ func init() {
 	rootCmd.Flags().StringVar(&since, "since", "24h", "Look at pods that died within duration (e.g. 2h, 30m)")
 	rootCmd.Flags().BoolVar(&listMode, "list", false, "List all recently dead pods in the namespace")
 	rootCmd.Flags().BoolVar(&namespaceAnalysis, "namespace-analysis", false, "Include namespace-wide analysis in the report")
+	rootCmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "List dead pods across all namespaces")
+	rootCmd.Flags().StringVar(&filterCause, "filter", "", "Filter dead pods by cause (e.g., OOMKilled, CrashLoopBackOff)")
+	rootCmd.Flags().StringVar(&exportFile, "export", "", "Export report to specified file")
+	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output for debugging")
 }
 
 func Execute() error {
@@ -74,6 +96,14 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Verbose mode enabled\n")
+		fmt.Fprintf(os.Stderr, "Context: %s\n", kubeContext)
+		fmt.Fprintf(os.Stderr, "Namespace: %s\n", namespace)
+		fmt.Fprintf(os.Stderr, "All namespaces: %v\n", allNamespaces)
+		fmt.Fprintf(os.Stderr, "Filter: %s\n", filterCause)
+	}
+
 	if listMode {
 		return runListMode(client, sinceDuration)
 	}
@@ -87,13 +117,50 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runListMode(client *k8s.Client, sinceDuration time.Duration) error {
-	deadPods, err := client.ListDeadPods(namespace, sinceDuration)
-	if err != nil {
-		return fmt.Errorf("failed to list dead pods: %w", err)
+	var deadPods []k8s.DeadPodSummary
+	var err error
+
+	if allNamespaces {
+		deadPods, err = client.ListDeadPodsAllNamespaces(sinceDuration)
+		if err != nil {
+			return fmt.Errorf("failed to list dead pods across all namespaces: %w", err)
+		}
+	} else {
+		deadPods, err = client.ListDeadPods(namespace, sinceDuration)
+		if err != nil {
+			return fmt.Errorf("failed to list dead pods: %w", err)
+		}
+	}
+
+	// Filter by cause if specified
+	if filterCause != "" {
+		var filtered []k8s.DeadPodSummary
+		for _, pod := range deadPods {
+			if strings.Contains(strings.ToLower(pod.Cause), strings.ToLower(filterCause)) {
+				filtered = append(filtered, pod)
+			}
+		}
+		deadPods = filtered
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Filtered %d pods by cause '%s'\n", len(filtered), filterCause)
+		}
+	}
+
+	var outputWriter io.Writer = os.Stdout
+	if exportFile != "" {
+		file, err := os.Create(exportFile)
+		if err != nil {
+			return fmt.Errorf("failed to create export file: %w", err)
+		}
+		defer file.Close()
+		outputWriter = file
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Exporting report to %s\n", exportFile)
+		}
 	}
 
 	f := formatter.New(outputFormat)
-	return f.FormatDeadPodList(os.Stdout, deadPods, namespace, since)
+	return f.FormatDeadPodList(outputWriter, deadPods, namespace, since)
 }
 
 func runInspectMode(client *k8s.Client, podName string, sinceDuration time.Duration) error {
@@ -170,6 +237,19 @@ func runInspectMode(client *k8s.Client, podName string, sinceDuration time.Durat
 	report := analyzer.Analyze(podInfo, events, logs, nodeConditions, logLines, nodeInfo, pvcs, quota, referencedResources, networkPolicies, namespaceStats)
 	report.NoRecommendations = noRecommendations
 
+	var outputWriter io.Writer = os.Stdout
+	if exportFile != "" {
+		file, err := os.Create(exportFile)
+		if err != nil {
+			return fmt.Errorf("failed to create export file: %w", err)
+		}
+		defer file.Close()
+		outputWriter = file
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Exporting report to %s\n", exportFile)
+		}
+	}
+
 	f := formatter.New(outputFormat)
-	return f.FormatReport(os.Stdout, report)
+	return f.FormatReport(outputWriter, report)
 }

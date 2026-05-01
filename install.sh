@@ -43,10 +43,29 @@ echo "Installing pod-why-dead $LATEST_VERSION for $OS-$ARCH..."
 
 # Download and extract
 DOWNLOAD_URL="https://github.com/NotHarshhaa/pod-why-dead/releases/download/${LATEST_VERSION}/pod-why-dead_${LATEST_VERSION}_${OS}_${ARCH}.tar.gz"
+CHECKSUM_URL="https://github.com/NotHarshhaa/pod-why-dead/releases/download/${LATEST_VERSION}/pod-why-dead_${LATEST_VERSION}_checksums.txt"
 TMP_DIR=$(mktemp -d)
 cd $TMP_DIR
 
+echo "Downloading checksums..."
+curl -sSL $CHECKSUM_URL -o checksums.txt
+
+echo "Downloading binary..."
 curl -sSL $DOWNLOAD_URL -o pod-why-dead.tar.gz
+
+echo "Verifying checksum..."
+EXPECTED_CHECKSUM=$(grep "pod-why-dead_${LATEST_VERSION}_${OS}_${ARCH}.tar.gz" checksums.txt | awk '{print $1}')
+ACTUAL_CHECKSUM=$(sha256sum pod-why-dead.tar.gz | awk '{print $1}')
+
+if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
+  echo "ERROR: Checksum verification failed!"
+  echo "Expected: $EXPECTED_CHECKSUM"
+  echo "Actual:   $ACTUAL_CHECKSUM"
+  rm -rf $TMP_DIR
+  exit 1
+fi
+
+echo "Checksum verified successfully."
 tar xzf pod-why-dead.tar.gz
 
 # Install

@@ -19,7 +19,8 @@ import (
 
 // Client wraps the Kubernetes clientset.
 type Client struct {
-	clientset *kubernetes.Clientset
+	clientset      *kubernetes.Clientset
+	requestTimeout time.Duration
 }
 
 // NewClient creates a new Kubernetes client from kubeconfig.
@@ -45,7 +46,10 @@ func NewClient(kubeContext string) (*Client, error) {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	return &Client{clientset: clientset}, nil
+	return &Client{
+		clientset:      clientset,
+		requestTimeout: 30 * time.Second,
+	}, nil
 }
 
 // PodInfo holds structured information about a dead pod.
@@ -143,7 +147,14 @@ type EventInfo struct {
 
 // GetPodInfo retrieves detailed information about a pod.
 func (c *Client) GetPodInfo(namespace, name string) (*PodInfo, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(name); err != nil {
+		return nil, fmt.Errorf("invalid pod name: %w", err)
+	}
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod %s/%s: %w", namespace, name, err)
@@ -333,7 +344,15 @@ func extractProbe(p *corev1.Probe) *ProbeInfo {
 
 // GetPodEvents retrieves events for a specific pod.
 func (c *Client) GetPodEvents(namespace, podName string) ([]EventInfo, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(podName); err != nil {
+		return nil, fmt.Errorf("invalid pod name: %w", err)
+	}
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", podName)
 	eventList, err := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
 		FieldSelector: fieldSelector,
@@ -369,7 +388,17 @@ func (c *Client) GetPodEvents(namespace, podName string) ([]EventInfo, error) {
 
 // GetPreviousLogs retrieves previous container logs.
 func (c *Client) GetPreviousLogs(namespace, podName, containerName string, tailLines int64) (string, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(podName); err != nil {
+		return "", fmt.Errorf("invalid pod name: %w", err)
+	}
+	if err := validateK8sResourceName(namespace); err != nil {
+		return "", fmt.Errorf("invalid namespace: %w", err)
+	}
+	if err := validateK8sResourceName(containerName); err != nil {
+		return "", fmt.Errorf("invalid container name: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	opts := &corev1.PodLogOptions{
 		Container: containerName,
 		Previous:  true,
@@ -393,7 +422,11 @@ func (c *Client) GetPreviousLogs(namespace, podName, containerName string, tailL
 
 // GetNodeConditions retrieves conditions and resource info for a node.
 func (c *Client) GetNodeConditions(nodeName string) (*NodeConditions, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(nodeName); err != nil {
+		return nil, fmt.Errorf("invalid node name: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	node, err := c.clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
@@ -434,7 +467,11 @@ func (c *Client) GetNodeConditions(nodeName string) (*NodeConditions, error) {
 
 // ListDeadPods lists all dead/failed/crashlooping pods in a namespace within a duration.
 func (c *Client) ListDeadPods(namespace string, since time.Duration) ([]DeadPodSummary, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	podList, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
@@ -461,6 +498,59 @@ func (c *Client) ListDeadPods(namespace string, since time.Duration) ([]DeadPodS
 				alreadyAdded := false
 				for _, r := range results {
 					if r.Name == pod.Name {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					results = append(results, DeadPodSummary{
+						Name:      pod.Name,
+						Namespace: pod.Namespace,
+						Cause:     pod.Status.Reason,
+						DeathTime: deathTime,
+					})
+				}
+			}
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].DeathTime.Before(results[j].DeathTime)
+	})
+
+	return results, nil
+}
+
+// ListDeadPodsAllNamespaces lists all dead/failed/crashlooping pods across all namespaces within a duration.
+func (c *Client) ListDeadPodsAllNamespaces(since time.Duration) ([]DeadPodSummary, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
+	podList, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	cutoff := time.Now().Add(-since)
+	var results []DeadPodSummary
+
+	for _, pod := range podList.Items {
+		for _, cs := range pod.Status.ContainerStatuses {
+			summary := checkContainerForDeath(pod.Name, pod.Namespace, cs, cutoff)
+			if summary != nil {
+				results = append(results, *summary)
+				break
+			}
+		}
+
+		if pod.Status.Phase == corev1.PodFailed {
+			deathTime := pod.CreationTimestamp.Time
+			if pod.Status.StartTime != nil {
+				deathTime = pod.Status.StartTime.Time
+			}
+			if deathTime.After(cutoff) {
+				alreadyAdded := false
+				for _, r := range results {
+					if r.Name == pod.Name && r.Namespace == pod.Namespace {
 						alreadyAdded = true
 						break
 					}
@@ -548,11 +638,20 @@ type PVCInfo struct {
 
 // GetPVCInfo retrieves PVC information for a pod.
 func (c *Client) GetPVCInfo(namespace string, pvcNames []string) ([]PVCInfo, error) {
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	for _, pvcName := range pvcNames {
+		if err := validateK8sResourceName(pvcName); err != nil {
+			return nil, fmt.Errorf("invalid PVC name %q: %w", pvcName, err)
+		}
+	}
 	if len(pvcNames) == 0 {
 		return nil, nil
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	var pvcs []PVCInfo
 
 	for _, pvcName := range pvcNames {
@@ -574,12 +673,17 @@ func (c *Client) GetPVCInfo(namespace string, pvcNames []string) ([]PVCInfo, err
 			accessModes = string(pvc.Spec.AccessModes[0])
 		}
 
+		storageClassName := ""
+		if pvc.Spec.StorageClassName != nil {
+			storageClassName = *pvc.Spec.StorageClassName
+		}
+
 		pvcs = append(pvcs, PVCInfo{
 			Name:         pvc.Name,
 			Status:       string(pvc.Status.Phase),
 			VolumeName:   pvc.Spec.VolumeName,
 			Capacity:     capacity,
-			StorageClass: *pvc.Spec.StorageClassName,
+			StorageClass: storageClassName,
 			AccessModes:  accessModes,
 			Bound:        pvc.Status.Phase == corev1.ClaimBound,
 		})
@@ -608,7 +712,11 @@ type TaintInfo struct {
 
 // GetNodeInfo retrieves detailed node information.
 func (c *Client) GetNodeInfo(nodeName string) (*NodeInfo, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(nodeName); err != nil {
+		return nil, fmt.Errorf("invalid node name: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	node, err := c.clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
@@ -667,7 +775,11 @@ type NetworkPolicyInfo struct {
 
 // GetResourceQuota retrieves namespace resource quota information.
 func (c *Client) GetResourceQuota(namespace string) (*QuotaInfo, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	quotaList, err := c.clientset.CoreV1().ResourceQuotas(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list resource quotas: %w", err)
@@ -780,20 +892,38 @@ func (c *Client) ValidateReferencedResources(namespace string, pod *corev1.Pod) 
 }
 
 func (c *Client) checkConfigMapExists(namespace, name string) bool {
-	ctx := context.Background()
+	if err := validateK8sResourceName(name); err != nil {
+		return false
+	}
+	if err := validateK8sResourceName(namespace); err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	_, err := c.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	return err == nil
 }
 
 func (c *Client) checkSecretExists(namespace, name string) bool {
-	ctx := context.Background()
+	if err := validateK8sResourceName(name); err != nil {
+		return false
+	}
+	if err := validateK8sResourceName(namespace); err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	_, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	return err == nil
 }
 
 // CheckNetworkPolicies checks if network policies might affect the pod.
 func (c *Client) CheckNetworkPolicies(namespace string, podLabels map[string]string) ([]NetworkPolicyInfo, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 
 	// Get network policies in the namespace
 	policyList, err := c.clientset.NetworkingV1().NetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
@@ -842,7 +972,14 @@ func policyMatchesPod(policy *networkingv1.NetworkPolicy, podLabels map[string]s
 
 // GetPod retrieves the raw Pod object.
 func (c *Client) GetPod(namespace, name string) (*corev1.Pod, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(name); err != nil {
+		return nil, fmt.Errorf("invalid pod name: %w", err)
+	}
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod %s/%s: %w", namespace, name, err)
@@ -852,7 +989,11 @@ func (c *Client) GetPod(namespace, name string) (*corev1.Pod, error) {
 
 // GetNamespacePodStats returns statistics about pods in a namespace.
 func (c *Client) GetNamespacePodStats(namespace string) (map[string]int32, error) {
-	ctx := context.Background()
+	if err := validateK8sResourceName(namespace); err != nil {
+		return nil, fmt.Errorf("invalid namespace: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	defer cancel()
 	podList, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
@@ -884,4 +1025,27 @@ func (c *Client) GetNamespacePodStats(namespace string) (map[string]int32, error
 	}
 
 	return stats, nil
+}
+
+// validateK8sResourceName validates that a Kubernetes resource name follows the naming conventions
+// See: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/
+func validateK8sResourceName(name string) error {
+	if len(name) == 0 || len(name) > 253 {
+		return fmt.Errorf("name must be between 1 and 253 characters")
+	}
+
+	// Check that name consists of lowercase alphanumeric characters, '-', or '.'
+	// and must start and end with an alphanumeric character
+	for i, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.') {
+			return fmt.Errorf("name contains invalid character '%c' at position %d", r, i)
+		}
+	}
+
+	// Must start and end with alphanumeric
+	if name[0] == '-' || name[0] == '.' || name[len(name)-1] == '-' || name[len(name)-1] == '.' {
+		return fmt.Errorf("name must start and end with an alphanumeric character")
+	}
+
+	return nil
 }

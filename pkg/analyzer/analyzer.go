@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -403,13 +404,9 @@ func buildTimeline(podInfo *k8s.PodInfo, events []k8s.EventInfo) []TimelineEntry
 	}
 
 	// Sort by time
-	for i := 0; i < len(timeline); i++ {
-		for j := i + 1; j < len(timeline); j++ {
-			if timeline[j].RawTime.Before(timeline[i].RawTime) {
-				timeline[i], timeline[j] = timeline[j], timeline[i]
-			}
-		}
-	}
+	sort.Slice(timeline, func(i, j int) bool {
+		return timeline[i].RawTime.Before(timeline[j].RawTime)
+	})
 
 	// Deduplicate adjacent entries with same event text
 	if len(timeline) > 1 {

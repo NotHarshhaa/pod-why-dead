@@ -171,6 +171,18 @@ pod-why-dead -n <namespace> <pod-name>
 
 # Also works as kubectl plugin
 kubectl why-dead -n <namespace> <pod-name>
+
+# List dead pods across all namespaces
+pod-why-dead --all-namespaces --list --since 1h
+
+# Filter by specific death cause
+pod-why-dead -n production --list --filter OOMKilled
+
+# Export report to file
+pod-why-dead -n production my-pod --export report.json
+
+# Verbose mode for debugging
+pod-why-dead -n production my-pod --verbose
 ```
 
 ### Flags
@@ -178,6 +190,7 @@ kubectl why-dead -n <namespace> <pod-name>
 | Flag | Description | Default |
 |---|---|---|
 | `-n, --namespace` | Kubernetes namespace | `default` |
+| `-A, --all-namespaces` | List dead pods across all namespaces | `false` |
 | `--context` | kubeconfig context to use | current context |
 | `--log-lines` | Number of previous log lines to show | `20` |
 | `--output` | Output format: `text`, `json`, `markdown` | `text` |
@@ -185,6 +198,9 @@ kubectl why-dead -n <namespace> <pod-name>
 | `--since` | Look at pods that died within duration (e.g. `2h`, `30m`) | `24h` |
 | `--namespace-analysis` | Include namespace-wide pod statistics | `false` |
 | `--list` | List all recently dead pods in the namespace | `false` |
+| `--filter` | Filter dead pods by cause (e.g., `OOMKilled`, `CrashLoopBackOff`) | (none) |
+| `--export` | Export report to specified file | (none) |
+| `-v, --verbose` | Enable verbose output for debugging | `false` |
 
 ### Output formats
 
